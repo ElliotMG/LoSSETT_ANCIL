@@ -1,6 +1,6 @@
 # The LoSSETT ancilliaries repo
 
-This repo contains ancilliary scripts to aid in the running of LoSSETT, preprocessing and visualisation of outputs.
+This repo contains ancilliary scripts to aid in the running of LoSSETT (https://github.com/ElliotMG/LoSSETT), preprocessing and visualisation of outputs.
 
 ## Repository Structure
 
