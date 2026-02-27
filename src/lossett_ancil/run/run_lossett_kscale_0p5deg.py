@@ -7,7 +7,7 @@ import numpy as np
 import xarray as xr
 import datetime as dt
 
-from lossett_control.preprocessing.preprocess_kscale import load_kscale_0p5deg
+from lossett_ancil.preprocess.preprocess_kscale import load_kscale_0p5deg
 from lossett.calc.calc_inter_scale_transfers import calc_inter_scale_energy_transfer_kinetic
 
 if __name__ == "__main__":
