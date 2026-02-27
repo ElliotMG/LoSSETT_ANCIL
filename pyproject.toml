@@ -1,0 +1,34 @@
+[project]
+#name = "lossett-ancil"
+name = "lossett_control"
+version = "0.2"
+description = "A Python package for calculating inter-scale energy transfers in the atmosphere (and other fluids)."
+authors = [
+    {name = "Dan Shipley",email = "daniel.shipley@reading.ac.uk"},
+    {name = "Elliot McKinnon-Gray",email="e.b.mckinnon-gray@pgr.reading.ac.uk"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11" # required for compatibility with mo_pack
+dependencies = [
+    "xarray",
+    "scitools-iris",
+    "numpy<2.0.0", # mo_pack conflicts w/ numpy >=2.0.0
+    "pandas",
+    "datetime",
+    "matplotlib",
+    "cartopy",
+    "pillow>=11.3.0",
+    "mo_pack @ git+https://github.com/SciTools/mo_pack.git",
+    "fonttools>=4.60.2"
+]
+#packages = [
+#    { include = "lossett_control" }
+#]
+
+[project.urls]
+repository = "https://github.com/ElliotMG/LoSSETT_ANCIL"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
