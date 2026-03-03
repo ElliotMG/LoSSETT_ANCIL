@@ -20,7 +20,8 @@ dependencies = [
     "pillow>=11.3.0",
     "mo_pack @ git+https://github.com/SciTools/mo_pack.git",
     "fonttools>=4.60.2",
-    "lossett @ git+https://github.com/ElliotMG/LoSSETT.git"
+    "lossett @ git+https://github.com/ElliotMG/LoSSETT.git",
+    "healpy"
 ]
 
 [project.urls]
