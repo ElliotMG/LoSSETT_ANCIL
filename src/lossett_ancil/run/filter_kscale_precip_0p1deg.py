@@ -7,7 +7,7 @@ import xarray as xr
 import datetime as dt
 
 # local imports
-from lossett_control.preprocessing.preprocess_kscale import load_kscale_0p5deg, \
+from lossett_ancil.preprocess.preprocess_kscale import load_kscale_0p5deg, \
     parse_period_id, parse_dri_mod_id, parse_nest_mod_id
 from lossett.filtering.integral_filter import filter_field
 

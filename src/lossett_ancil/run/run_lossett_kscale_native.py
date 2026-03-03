@@ -7,7 +7,7 @@ import numpy as np
 import xarray as xr
 import datetime as dt
 
-from lossett_control.preprocessing.preprocess_kscale import check_longitude, \
+from lossett_ancil.preprocess.preprocess_kscale import load_kscale_native, check_longitude, \
     parse_period_id, parse_dri_mod_id, parse_nest_mod_id
 from lossett.calc.calc_inter_scale_transfers import calc_inter_scale_energy_transfer_kinetic
 
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     year = int(sys.argv[4])
     month = int(sys.argv[5])
     day = int(sys.argv[6])
-    hour = int(sys.argv[7])
+    hour = int(sys.argv[7]) # optional
     datetime = dt.datetime(year,month,day,hour)
     dt_str = f"{datetime.year:04d}{datetime.month:02d}{datetime.day:02d}T{(datetime.hour//12)*12:02d}"
 
@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     # output directory
     OUT_DIR_ROOT = sys.argv[9] # required
-    OUT_DIR = os.path.join(OUT_DIR_ROOT, period, "n640_regrid")
+    OUT_DIR = os.path.join(OUT_DIR_ROOT, period)
     Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
 
     # optional arguments
@@ -68,6 +68,16 @@ if __name__ == "__main__":
     else:
         single_p = True
 
+    try:
+        load_nc = sys.argv[12] # optional
+    except:
+        load_nc = False
+    else:
+        if load_nc == "true" or load_nc == "True":
+            load_nc = True
+        else:
+            load_nc = False    
+
     print(
         "\n\nInput data specifications:\n"\
         f"period \t\t= {period}\n"\
@@ -78,6 +88,7 @@ if __name__ == "__main__":
     print(
         "\nCalculation specifications:\n"\
         f"out_dir \t= {OUT_DIR}\n"\
+        f"load_nc \t= {load_nc}\n"\
         f"single_t \t= {single_t}\n"\
         f"single_p \t= {single_p}\n"\
         f"max_r_deg \t= {max_r_deg:.1f}\n"\
@@ -99,12 +110,17 @@ if __name__ == "__main__":
     }
 
     # open data
-    DATA_DIR = \
-        "/gws/nopw/j04/kscale/USERS/dship/LoSSETT_in/preprocessed_kscale_data/"\
-        "DYAMOND_SUMMER/n1280_regrid/embedded/n640_regrid/"
-    fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.uvw_embedded_{dt_str}_n640.nc")
-    print(f"\nLoading from {fpath}")
-    ds_u_3D = xr.open_dataset(fpath,mask_and_scale=True,drop_variables="leadtime")
+    if load_nc:
+        DATA_DIR = "/work/scratch-pw2/dship/LoSSETT/preprocessed_kscale_data"
+        if dri_mod_id == "n2560RAL3":
+            dri_mod_str = "n2560_RAL3p3"
+        fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.uvw_{dt_str}.nc")
+        print(f"\nLoading via tmp NetCDF from {fpath}")
+        ds_u_3D = xr.open_dataset(fpath)
+    else:
+        ds_u_3D = load_kscale_native(
+            period,datetime,driving_model=dri_mod_id,nested_model=nest_mod_id
+        )
     
     if single_t:
         # subset single time
@@ -127,7 +143,7 @@ if __name__ == "__main__":
         p_str = f"_p{plev:04d}"
     else:
         p_str = ""
-        plevs = [100,150,200,250,300,400,500,600,700,850,925]
+        plevs = [50,200,500,700,850]#[200,850]
         ds_u_3D = ds_u_3D.sel(pressure=plevs,method="nearest").chunk(
             chunks={"pressure":pchunks}
         )
@@ -142,7 +158,7 @@ if __name__ == "__main__":
     if subset_lat:
         ds_u_3D = ds_u_3D.sel(latitude=slice(latmin,latmax))
         # modify to check sign of latmin, latmax to correctly infer South/North
-        subset_str = f"_{np.abs(latmin):02d}S-{latmax:02d}N"
+        subset_str = f"_{latmin:02d}S-{latmax:02d}N"
 
     # check longitude is [-180,180]
     ds_u_3D = check_longitude(ds_u_3D)
@@ -153,19 +169,18 @@ if __name__ == "__main__":
         print(f"\n\n\nCalculating {period} {nest_mod_str} (driven by {dri_mod_str}) DR indicator for {dt_str}")
 
     print("\nInput data:\n",ds_u_3D)
-
+    
     # specify length scales (10 length scales per decade unless 2dx > spacing between consecutive \ell)
-    #length_scales = np.array([32.,64.,100.,125.,160.,200.,250.,320.,400.,500.,640.,800.,1000.])
     length_scales = np.array(
-        [32.,64.,100.,125.,160.,200.,250.,320.,400.,500.,640.,800.,1000.,1250.,1600.,2000.,2500.]
+        [8,16,24,32,40,48,64,80,100,125,160,200,250,320,400]
     )
-    length_scales *= 1000.0 # convert to m
+    length_scales = 1000.0 * length_scales # convert to m; ensure float
     
     # calculate kinetic DR indicator
     Dl_u = calc_inter_scale_energy_transfer_kinetic(
         ds_u_3D, control_dict, length_scales=length_scales
     )
-
+    
     # ensure correct dimension ordering
     Dl_u = Dl_u.transpose("length_scale","time","pressure","latitude","longitude")
 
@@ -176,7 +191,7 @@ if __name__ == "__main__":
     fpath = os.path.join(
         OUT_DIR,
         f"{nest_mod_str}.{dri_mod_str}_inter_scale_transfer_of_kinetic_energy_"\
-        f"Lmin_{L_min:05.0f}_Lmax_{L_max:05.0f}_{dt_str}{subset_str}{p_str}{t_str}_n1280_embedded_n640.nc"
+        f"Lmin_{L_min:05.0f}_Lmax_{L_max:05.0f}_{dt_str}{subset_str}{p_str}{t_str}.nc"
     )
     print(f"\n{Dl_u.name}:\n",Dl_u)
     print(f"\nSaving {Dl_u.name} to NetCDF at location {fpath}.")

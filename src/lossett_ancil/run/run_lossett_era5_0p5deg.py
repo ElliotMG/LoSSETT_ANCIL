@@ -9,7 +9,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import cartopy as cpy
 
-from lossett_control.preprocessing import preprocess_era5
+from lossett_ancil.preprocess import preprocess_era5
 from lossett.calc.calc_inter_scale_transfers import calc_inter_scale_energy_transfer_kinetic
 
 if __name__ == "__main__":

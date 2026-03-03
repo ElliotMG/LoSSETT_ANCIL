@@ -8,7 +8,7 @@ import pandas as pd
 import datetime as dt
 import iris
 
-from lossett_control.preprocessing.preprocess_kscale import \
+from lossett_ancil.preprocess.preprocess_kscale import \
     parse_period_id, parse_dri_mod_id, parse_nest_mod_id, \
     load_kscale_native
 
