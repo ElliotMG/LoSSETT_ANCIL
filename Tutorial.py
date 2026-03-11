@@ -1,6 +1,7 @@
 import numpy as np
 import xarray as xr
 import warnings
+import os,sys
 import intake
 import healpy
 from lossett.calc.calc_inter_scale_transfers import calc_inter_scale_energy_transfer_kinetic
@@ -21,7 +22,7 @@ def get_nn_lon_lat_index(nside, lons, lats):
 cat = intake.open_catalog('https://digital-earths-global-hackathon.github.io/catalog/catalog.yaml')['online']
 
 sim = cat['ERA5']
-zoom=9
+zoom=7
 ds = sim(zoom=zoom).to_dask() # Zoom=6 is about 1 deg
 
 supersampling = {"longitude": 4, "latitude": 4}
@@ -32,6 +33,11 @@ idx = get_nn_lon_lat_index(
     np.linspace(-90, 90, supersampling['latitude']*90)
 )
 
+y = int(sys.argv[1])
+m = int(sys.argv[2])
+d = int(sys.argv[3])
+
+# In this example we're just doing 2D on each layer to save having to convert ERA5 omega to w
 u_lon_lat = ds.u.isel(cell=idx).sel(time=slice(dt.datetime(2016,8,1),dt.datetime(2016,8,1))).coarsen(supersampling).mean()
 v_lon_lat = ds.v.isel(cell=idx).sel(time=slice(dt.datetime(2016,8,1),dt.datetime(2016,8,1))).coarsen(supersampling).mean()
 w_lon_lat = xr.zeros_like(u_lon_lat)
@@ -69,5 +75,13 @@ Dl_u = calc_inter_scale_energy_transfer_kinetic(
 # ensure correct dimension ordering
 Dl_u = Dl_u.transpose("length_scale","time","pressure","latitude","longitude")
 
-Dl_u.to_netcdf('./DL_u_example.nc')
-print('File saved')
+model = 'ERA5'
+var = 'inter_scale_transfer_of_kinetic_energy'
+L_min = length_scales[0]
+L_max = length_scales[-1]
+dt_str = f"{datetime.y:04d}{datetime.m:02d}{datetime.d:02d}"
+
+fname = f"{model}_{var}_Lmin_{L_min:05.0f}_Lmax_{L_max:05.0f}_{dt_str}.nc"
+
+Dl_u.to_netcdf(fname)
+print(f'File {fname} saved')
