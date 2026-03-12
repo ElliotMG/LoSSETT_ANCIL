@@ -21,7 +21,12 @@ dependencies = [
     "mo_pack @ git+https://github.com/SciTools/mo_pack.git",
     "fonttools>=4.60.2",
     "lossett @ git+https://github.com/ElliotMG/LoSSETT.git",
-    "healpy"
+    "warnings",
+    "intake",
+    "intake-esm",
+    "healpy",
+    "aiohttp",
+    "requests"
 ]
 
 [project.urls]
