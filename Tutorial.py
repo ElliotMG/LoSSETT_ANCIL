@@ -14,7 +14,7 @@ warnings.filterwarnings(
     category=FutureWarning,
 )
 ########################
-## NOTE this part is only needed as we are reading in HEALPix data. As long as you can get your data into the require 'ds_u_3D' form the software will work.
+## NOTE this part is only needed as we are reading in HEALPix data. Currently LoSSETT requires data to be on a regular horizontal grid.
 #########################
 # HEALPix to lat lon conversion function from easy.gems
 def get_nn_lon_lat_index(nside, lons, lats):
