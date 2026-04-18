@@ -13,7 +13,9 @@ warnings.filterwarnings(
     "ignore",
     category=FutureWarning,
 )
-
+########################
+## NOTE this part is only needed as we are reading in HEALPix data. Currently LoSSETT requires data to be on a regular horizontal grid.
+#########################
 # HEALPix to lat lon conversion function from easy.gems
 def get_nn_lon_lat_index(nside, lons, lats):
     lons2, lats2 = np.meshgrid(lons, lats)
