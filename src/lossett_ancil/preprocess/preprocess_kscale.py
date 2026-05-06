@@ -24,9 +24,9 @@ dri_mod_str_dict = {
         "n1280gal9": "n1280_GAL9"
     },
     "DYAMOND3": {
-        "n2560ral3": "n2560_RAL3p2",
-        "n1280gal9": "n1280_GAL9",
-        "n1280coma9": "n1280_CoMA9"
+        "n2560ral3": "n2560_RAL3p3_tuned",
+        "n1280gal9": "n1280_GAL9_v2",
+        "n1280coma9": "n1280_CoMA9_v2"
     },
     # 2. Added DS_embedded to valid driving models
     "DS_embedded": {
@@ -334,10 +334,15 @@ def load_kscale_native(
         nested_model=None,
         return_iris=False,
         save_nc=False,
-        force=False
+        force=False,
+        SAVE_DIR=None
 ):
     DATA_DIR_ROOT = "/gws/nopw/j04/kscale/"
     dt_str = f"{datetime.year:04d}{datetime.month:02d}{datetime.day:02d}T{(datetime.hour//12)*12:02d}"
+
+    if save_nc and SAVE_DIR is None:
+        print("\nError! SAVE_DIR must be provided when save_nc == True")
+        sys.exit(1)
     
     # should add a check that dates are in correct bounds!
     # parse period, driving_model, nested_model here
@@ -347,18 +352,23 @@ def load_kscale_native(
     
     # DYAMOND 3
     if period == "DYAMOND3":
-        DATA_DIR = os.path.join(DATA_DIR_ROOT,"DYAMOND3_data")
+        DATA_DIR = os.path.join(DATA_DIR_ROOT,"DYAMOND3_reruns")#"DYAMOND3_data")
 
         # specify driving model
         if driving_model == "n2560ral3":
-            DATA_DIR = os.path.join(DATA_DIR,"5km-RAL3")
-            dri_mod_str = "n2560_RAL3p3"
+            #DATA_DIR = os.path.join(DATA_DIR,"5km-RAL3")
+            #dri_mod_str = "n2560_RAL3p3"
+            DATA_DIR = os.path.join(DATA_DIR,"5km-RAL3p3-tuned")
+            dri_mod_str = "n2560_RAL3p3_tuned"
         elif driving_model == "n1280gal9":
-            DATA_DIR = os.path.join(DATA_DIR,"10km-GAL9-nest")
-            dri_mod_str = "n1280_GAL9_nest"
+            #DATA_DIR = os.path.join(DATA_DIR,"10km-GAL9-nest")
+            #dri_mod_str = "n1280_GAL9_nest"
+            DATA_DIR = os.path.join(DATA_DIR,"10km-GAL9")
+            dri_mod_str = "n1280_GAL9_v2"
         elif driving_model == "n1280coma9":
             DATA_DIR = os.path.join(DATA_DIR,"10km-CoMA9")
-            dri_mod_str = "n1280_CoMA9"
+            #dri_mod_str = "n1280_CoMA9"
+            dri_mod_str = "n1280_CoMA9_v2"
 
         # specify nested model
         if nested_model is None or nested_model == "glm":
@@ -395,7 +405,8 @@ def load_kscale_native(
             print(f"Nested model {nested_model} not yet supported (or does not exist).")
             sys.exit(1)
 
-        fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.apverc_{dt_str}.pp")
+        #fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.apverc_{dt_str}.pp")
+        fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.apverc_{dt_str}00Z.pp")
 
     #endif
 
@@ -475,11 +486,12 @@ def load_kscale_native(
     # add units to pressure coord
     ds.pressure.attrs["units"] = "hPa"
 
+    # ensure correct dimension ordering
+    ds = ds.transpose("time","pressure","latitude","longitude")
+
     # save NetCDF to scratch
     if save_nc:
         from pathlib import Path
-        #SAVE_DIR = "/work/scratch-pw4/dship/LoSSETT/preprocessed_kscale_data"
-        SAVE_DIR = f"/gws/nopw/j04/kscale/USERS/dship/LoSSETT_in/preprocessed_kscale_data/{period}"
         Path(SAVE_DIR).mkdir(parents=True,exist_ok=True)
         fpath = os.path.join(SAVE_DIR,f"{nest_mod_str}.{dri_mod_str}.uvw_{dt_str}.nc")
         if not os.path.exists(fpath) or force:
