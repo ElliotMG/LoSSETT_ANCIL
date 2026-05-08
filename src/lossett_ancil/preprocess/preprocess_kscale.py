@@ -12,6 +12,7 @@ import iris
 DyS = ["dyamondsummer","dyamonds","dyamond1","dys","dy1","ds","d1"]
 DyW = ["dyamondwinter","dyamondw","dyamond2","dyw","dy2","dw","d2"]
 Dy3 = ["dyamond3","dy3","d3"]
+Dy3_OLD = ["dyamond3old", "dy3old", "d3old"]
 DySE = ["dsembedded", "ds_embedded", "dse"] # New IDs for embedded
 
 dri_mod_str_dict = {
@@ -24,6 +25,12 @@ dri_mod_str_dict = {
         "n1280gal9": "n1280_GAL9"
     },
     "DYAMOND3": {
+        "n2560ral3": "n2560_RAL3p3_tuned",
+        "n2560coma9": "n2560_CoMA9_hier_v2",
+        "n1280gal9": "n1280_GAL9_v2",
+        "n1280coma9": "n1280_CoMA9_v2"
+    },
+    "DYAMOND3_OLD": {
         "n2560ral3": "n2560_RAL3p3_tuned",
         "n1280gal9": "n1280_GAL9_v2",
         "n1280coma9": "n1280_CoMA9_v2"
@@ -67,7 +74,7 @@ nest_mod_str_dict = {
             "channeln2560ral3": "channel_n2560_RAL3p2",
             "channeln2560gal9": "channel_n2560_GAL9",
             "channelkm4p4ral3": "channel_km4p4_RAL3p2",
-            "lamafric elevationkm2p2ral3": "lam_africa_km2p2_RAL3p2",
+            "lamafricakm2p2ral3": "lam_africa_km2p2_RAL3p2",
             "lamindiakm2p2ral3": "lam_india_km2p2_RAL3p2",
             "lamsamericakm2p2ral3": "lam_samerica_km2p2_RAL3p2",
             "lamseakm2p2ral3": "lam_sea_km2p2_RAL3p2"
@@ -88,16 +95,26 @@ nest_mod_str_dict = {
     },
     "DYAMOND3": {
         "n2560ral3": {"glm": "glm"},
+        "n2560coma9": {
+            "glm": "glm",
+            "lamsamericakm4p4ral3": "SAmer_km4p4_RAL3p3",
+            "lamafricakm4p4ral3": "Africa_km4p4_RAL3P3"
+        },
+        "n1280gal9": {"glm": "glm"},
+        "n1280coma9": {"glm": "glm"},
+    },
+    "DYAMOND3_OLD": {
+        "n2560ral3": {"glm": "glm"},
         "n1280gal9": {
             "glm": "glm",
-            "channelkm4p4ral3": "channel_km4p4_RAL3p3",
-            "channelkm4p4coma9": "channel_km4p4_CoMA9",
-            "lamafricakm4p4ral3": "lam_africa_km4p4_RAL3p3",
-            "lamafricakm4p4coma9": "lam_africa_km4p4_CoMA9",
-            "lamsamericakm4p4ral3": "lam_samerica_km4p4_RAL3p2",
-            "lamsamericakm4p4coma9": "lam_samerica_km4p4_CoMA9",
-            "lamseakm4p4ral3": "lam_sea_km4p4_RAL3p2",
-            "lamseakm4p4coma9": "lam_sea_km4p4_CoMA9"
+            "channelkm4p4ral3": "CTC_km4p4_RAL3P3",
+            "channelkm4p4coma9": "CTC_km4p4_CoMA9_TBv1",
+            "lamafricakm4p4ral3": "Africa_km4p4_RAL3P3",
+            "lamafricakm4p4coma9": "Africa_km4p4_CoMA9_TBv1",
+            "lamsamericakm4p4ral3": "SAmer_km4p4_RAL3P3",
+            "lamsamericakm4p4coma9": "SAmer_km4p4_CoMA9_TBv1",
+            "lamseakm4p4ral3": "SEA_km4p4_RAL3P3",
+            "lamseakm4p4coma9": "SEA_km4p4_CoMA9_TBv1"
         },
         "n1280coma9": {"glm": "glm"},
     },
@@ -352,60 +369,21 @@ def load_kscale_native(
     
     # DYAMOND 3
     if period == "DYAMOND3":
-        DATA_DIR = os.path.join(DATA_DIR_ROOT,"DYAMOND3_reruns")#"DYAMOND3_data")
+        DATA_DIR = os.path.join(DATA_DIR_ROOT,"DYAMOND3_reruns")
 
         # specify driving model
         if driving_model == "n2560ral3":
-            #DATA_DIR = os.path.join(DATA_DIR,"5km-RAL3")
-            #dri_mod_str = "n2560_RAL3p3"
             DATA_DIR = os.path.join(DATA_DIR,"5km-RAL3p3-tuned")
-            dri_mod_str = "n2560_RAL3p3_tuned"
+        elif driving_model == "n2560coma9":
+            DATA_DIR = os.path.join(DATA_DIR,"5km-CoMA9")
         elif driving_model == "n1280gal9":
-            #DATA_DIR = os.path.join(DATA_DIR,"10km-GAL9-nest")
-            #dri_mod_str = "n1280_GAL9_nest"
             DATA_DIR = os.path.join(DATA_DIR,"10km-GAL9")
-            dri_mod_str = "n1280_GAL9_v2"
         elif driving_model == "n1280coma9":
             DATA_DIR = os.path.join(DATA_DIR,"10km-CoMA9")
-            #dri_mod_str = "n1280_CoMA9"
-            dri_mod_str = "n1280_CoMA9_v2"
 
         # specify nested model
-        if nested_model is None or nested_model == "glm":
-            DATA_DIR = os.path.join(DATA_DIR,"glm","field.pp","apverc.pp")
-            nest_mod_str = "glm"
-        elif driving_model != "n1280gal9":
-            print(f"Error! Driving model {dri_mod_str} has no nested models.")
-            sys.exit(1)
-        elif nested_model == "channelkm4p4ral3":
-            DATA_DIR = os.path.join(DATA_DIR,"CTC_km4p4_RAL3P3","field.pp","apverc.pp")
-            nest_mod_str = "CTC_km4p4_RAL3P3"
-        elif nested_model == "africakm4p4ral3":
-            DATA_DIR = os.path.join(DATA_DIR,"Africa_km4p4_RAL3P3","field.pp","apverc.pp")
-            nest_mod_str = "Africa_km4p4_RAL3P3"
-        elif nested_model == "samerkm4p4ral3":
-            DATA_DIR = os.path.join(DATA_DIR,"SAmer_km4p4_RAL3P3","field.pp","apverc.pp")
-            nest_mod_str = "SAmer_km4p4_RAL3P3"
-        elif nested_model == "seakm4p4ral3":
-            DATA_DIR = os.path.join(DATA_DIR,"SEA_km4p4_RAL3P3","field.pp","apverc.pp")
-            nest_mod_str = "SEA_km4p4_RAL3P3"
-        elif nested_model == "channelkm4p4coma9":
-            DATA_DIR = os.path.join(DATA_DIR,"CTC_km4p4_CoMA9_TBv1","field.pp","apverc.pp")
-            nest_mod_str = "CTC_km4p4_CoMA9_TBv1"
-        elif nested_model == "africakm4p4coma9":
-            DATA_DIR = os.path.join(DATA_DIR,"Africa_km4p4_CoMA9_TBv1","field.pp","apverc.pp")
-            nest_mod_str = "Africa_km4p4_CoMA9_TBv1"
-        elif nested_model == "seakm4p4coma9":
-            DATA_DIR = os.path.join(DATA_DIR,"SEA_km4p4_CoMA9_TBv1","field.pp","apverc.pp")
-            nest_mod_str = "SEA_km4p4_CoMA9_TBv1"
-        elif nested_model == "samerkm4p4coma9":
-            DATA_DIR = os.path.join(DATA_DIR,"SAmer_km4p4_CoMA9_TBv1","field.pp","apverc.pp")
-            nest_mod_str = "SAmer_km4p4_CoMA9_TBv1"
-        else:
-            print(f"Nested model {nested_model} not yet supported (or does not exist).")
-            sys.exit(1)
+        DATA_DIR = os.path.join(DATA_DIR,nest_mod_str,"field.pp","apverc.pp")
 
-        #fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.apverc_{dt_str}.pp")
         fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.apverc_{dt_str}00Z.pp")
 
     #endif
