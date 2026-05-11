@@ -37,9 +37,9 @@ if __name__ == "__main__":
 
     # calculation specification
     chunk_latlon = False
-    subset_lat = False # should be optional argument!
-    latmin = -40 #-50
-    latmax = 26 #50
+    subset_lat = True #False # should be optional argument!
+    latmin = 0#-40 #-50
+    latmax = 90#26 #50
     max_r_deg = float(sys.argv[8]) # required
     tsteps = 4
     tchunks = 1
@@ -47,7 +47,8 @@ if __name__ == "__main__":
     prec = 1e-10
 
     # output directory
-    OUT_DIR = sys.argv[9] # required
+    OUT_DIR_ROOT = sys.argv[9] # required
+    OUT_DIR = os.path.join(OUT_DIR_ROOT,period)
     Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
 
     # optional arguments
@@ -110,8 +111,12 @@ if __name__ == "__main__":
 
     # open data
     if load_nc:
+        #DATA_DIR = \
+        #    f"/gws/nopw/j04/kscale/USERS/dship/LoSSETT_in/preprocessed_kscale_data/{period}/n1280_regrid"
         DATA_DIR = \
-            "/gws/nopw/j04/kscale/USERS/dship/LoSSETT_in/preprocessed_kscale_data/DYAMOND_SUMMER/n1280_regrid"
+            f"/work/scratch-pw4/dship/LoSSETT/preprocessed_kscale_data/{period}/"
+        if dri_mod_id == "n2560ral3":
+            DATA_DIR = os.path.join(DATA_DIR, "n1280_regrid")
         fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.uvw_{dt_str}_n1280.nc")
         print(f"\nLoading via tmp NetCDF from {fpath}")
         ds_u_3D = xr.open_dataset(fpath,mask_and_scale=True,drop_variables="leadtime")
@@ -164,11 +169,21 @@ if __name__ == "__main__":
         print(f"\n\n\nCalculating {period} {nest_mod_id} (driven by {dri_mod_id}) DR indicator for {dt_str}")
 
     print("\nInput data:\n",ds_u_3D)
+
+    # specify length scales (10 length scales per decade unless 2dx > spacing between consecutive \ell)
+    length_scales = np.array(
+        [16.,32.,48.,64.,80.,100.,125.,160.,200.,250.,320.,400.,500.,640.,800.,1000.]
+    )
+    length_scales *= 1000.0 # convert to m
     
     # calculate kinetic DR indicator
     Dl_u = calc_inter_scale_energy_transfer_kinetic(
-        ds_u_3D, control_dict
+        ds_u_3D, control_dict,
+        length_scales=length_scales
     )
+
+    # ensure correct dimension ordering
+    Dl_u = Dl_u.transpose("length_scale","time","pressure","latitude","longitude")
 
     # save to NetCDF
     n_l = len(Dl_u.length_scale)

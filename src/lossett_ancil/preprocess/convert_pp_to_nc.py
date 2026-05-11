@@ -22,7 +22,7 @@ if __name__ == "__main__":
     hour = int(sys.argv[7])
     save_nc = True
     force = True
-    plevs = [100,150,200,250,300,400,500,600,700,850,925,1000]
+    plevs = [100,150,200,250,300,400,500,600,700,850,925]
     #plevs = [200]
     
     # parse period, driving model, nested model
@@ -33,7 +33,6 @@ if __name__ == "__main__":
     datetime = dt.datetime(year,month,day,hour)
     dt_str = f"{datetime.year:04d}{datetime.month:02d}{datetime.day:02d}T{(datetime.hour//12)*12:02d}"
     
-    print("\n\n\nPreprocessing details:")
     print(
         "\n\nPreprocessing details:\n"\
         f"period \t\t= {period}\n"\
@@ -48,7 +47,8 @@ if __name__ == "__main__":
         driving_model=dri_mod_id,
         nested_model=nest_mod_id,
         save_nc=save_nc,
-        force=force
+        force=force,
+        SAVE_DIR=f"/work/scratch-pw4/dship/LoSSETT/preprocessed_kscale_data/{period}"
     ).sel(pressure=plevs,method="nearest")
 
     # ensure correct dimension ordering
