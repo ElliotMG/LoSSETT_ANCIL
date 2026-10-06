@@ -29,40 +29,79 @@ pip install -e .
 
 This will install as the user installation but using the editable cloned code. Please commit code improvements and discuss merging with the master branch with Elliot McKinnon-Gray, Dan Shipley, and other users.
 
-## Python and Julia tutorial timings
+## Python and Julia tutorial comparisons
 
-`Tutorial.py` prepares one ERA5 snapshot, runs the Python kinetic-energy-transfer
-calculation, and saves one global contour map. It also writes a small shared
-input bundle (`Tutorial_input_YYYYMMDD`) for `Tutorial.jl`. The bundle avoids
-downloading and remapping ERA5 a second time. An additional 2x spatial
-coarsening keeps the Julia core's direct-grid calculation practical while
-retaining the global domain. Both maps use the 850 hPa, 500 km
-kinetic-energy-transfer field, the same inputs, Plate Carrée projection,
-global domain, and contour scale. The Julia spherical implementation does not
-wrap across the longitude seam, so values within its 10-degree radius of the
-antimeridian may differ from Python's periodic-longitude calculation.
+`Tutorial.py` prepares one ERA5 snapshot, runs the original Cartesian Python
+core and the Python spherical-geometry branch, and saves one global contour
+map for each. It also writes a shared input bundle (`Tutorial_input_YYYYMMDD`)
+for `Tutorial.jl`, avoiding a second ERA5 download/remap. The Julia script runs
+both its Cartesian and spherical cores, saves their maps, then creates two
+difference maps (`Python - Julia`) and prints max-absolute and RMS differences.
+Thus running both scripts produces six single-map PNGs (for the default date):
 
-Run the Python script first in an environment with this repository's Python
-dependencies and LoSSETT installed:
+* `Tutorial_cartesian_python_20160801.png`
+* `Tutorial_cartesian_julia_20160801.png`
+* `Tutorial_spherical_python_20160801.png`
+* `Tutorial_spherical_julia_20160801.png`
+* `Tutorial_cartesian_python_minus_julia_20160801.png`
+* `Tutorial_spherical_python_minus_julia_20160801.png`
+
+All four calculations use the same prepared 4-degree global grid, selected
+ERA5 pressure levels and u/v inputs (w is zero), 850 hPa map, and 500 km scale.
+The two implementation maps use the same Plate Carrée projection, domain, and
+fixed contour scale. Difference maps use a symmetric scale based on each
+pair's maximum absolute difference. The difference CLI loads both fields
+against the same manifest, rejects mismatched shapes/coordinates, and reports
+the number of finite difference cells as well as max-absolute and RMS values
+in `m^2 s^-3`.
+
+### Python environment and run
+
+Install the ancillary project first, then replace its default LoSSETT install
+with the public branch that contains the spherical Python helpers. That branch
+uses Numba and NumExpr, which are not declared by the LoSSETT project metadata:
 
 ```powershell
-python Tutorial.py 2016 08 01
+python -m pip install -e .
+git clone --branch spherical_geometry https://github.com/ElliotMG/LoSSETT.git "$env:TEMP\LoSSETT-spherical"
+python -m pip install -e "$env:TEMP\LoSSETT-spherical"
+python -m pip install numba numexpr
+python -c "from lossett.calc.spherical_geometry import compute_geometry; from lossett.calc.field_increments import compute_du3_angular_integral_global; print('LoSSETT spherical geometry API is available')"
+python .\Tutorial.py 2016 08 01
 ```
 
-This produces `Tutorial_python_20160801.png` and the Julia input bundle. To use
-the native Julia core, clone its public branch and point Julia at the package's
-actual project directory (`Julia` is a subdirectory of the LoSSETT checkout):
+The spherical map calls the `spherical_geometry` branch's `compute_geometry`,
+`compute_du3_angular_integral_global`, `get_integration_kernels`, and
+`integrate_over_scales` implementations directly, with geometry prepared
+in-memory for this reduced tutorial grid. Missing branch helpers are an error;
+the script does not substitute a Cartesian calculation. It follows that
+branch's current conventions: spherical mollifier normalization but `r dr`
+transfer integration (not `R sin(r/R) dr`), uniform angular sample weighting,
+and horizontal increments only. Since tutorial w is zero, omitting it does not
+change the inputs to the increment norm.
+
+### Julia environment and run
+
+Clone the standalone Julia package branch; its `Project.toml` lives in the
+`Julia` subdirectory of the checkout:
 
 ```powershell
-git clone --branch elliotmg-julia-spherical-geometry https://github.com/ElliotMG/LoSSETT.git "$env:TEMP\LoSSETT-julia"
-julia --project="$env:TEMP\LoSSETT-julia\Julia" .\Tutorial.jl .\Tutorial_input_20160801
+git clone --branch elliotmg-julia-spherical-geometry https://github.com/ElliotMG/LoSSET.git "$env:TEMP\LoSSET-julia"
+julia --project="$env:TEMP\LoSSET-julia\Julia" .\Tutorial.jl .\Tutorial_input_20160801
 ```
 
-The Julia command writes `Tutorial_julia_20160801.png` beside the scripts. For
-another date, run both commands with the same date and pass the corresponding
-`Tutorial_input_YYYYMMDD` directory to Julia. The reported elapsed time covers
-only each LoSSETT core calculation and its materialization; catalog access,
-HEALPix remapping, file handoff, and plotting are excluded. Each implementation
-runs one untimed full-case warm-up first so first-call compilation is not part
-of the reported time. ERA5 data is read from the remote catalog when the
-Python script runs.
+Set `PYTHON` to the Python executable in the prepared plotting environment if
+the `python` command is not available to Julia. For another date, run
+`Tutorial.py` with that date and pass its matching input directory to
+`Tutorial.jl`.
+
+The runtime in each implementation title covers the core call and materialized
+result, not catalog access, HEALPix remapping, or plotting. Julia performs an
+untimed full-case warm-up to exclude compilation; the spherical Python Numba
+angular-integration kernel is separately warmed before timing. Comparisons are
+not expected to have zero differences: Cartesian implementations use different
+discrete radial/angular quadratures; the spherical Python branch's integration
+uses `r dr` while Julia uses `R sin(r/R) dr`; and Julia's spherical core does
+not wrap across the longitude seam whereas the Python global workflow rolls
+fields periodically. Both spherical paths use uniform angular sample
+weighting, but their radial samples and radial integration differ.
