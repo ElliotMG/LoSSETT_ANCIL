@@ -11,6 +11,7 @@ log*
 *.o
 # data files
 *.nc
+/Tutorial_input_*/
 # images and PDFs
 *.pdf
 *.svg
