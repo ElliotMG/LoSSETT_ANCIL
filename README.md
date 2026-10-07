@@ -119,7 +119,7 @@ git clone --branch elliotmg-fix-spherical-kernel-unpacking https://github.com/El
 git -C "${TMPDIR:-/tmp}/LoSSETT-spherical" branch --show-current
 python -m pip install -e "${TMPDIR:-/tmp}/LoSSETT-spherical"
 python -m pip install numba numexpr
-python -c "from lossett.calc.spherical_geometry import compute_geometry; from lossett.calc.field_increments import compute_du3_angular_integral_global, compute_du3_angular_integral_subset; print('LoSSETT spherical and tangent-quadratic APIs are available')"
+python -c "from lossett.calc.spherical_geometry import compute_geometry; from lossett.calc.field_increments import compute_du3_angular_integral_subset; print('LoSSETT spherical and tangent-quadratic APIs are available')"
 export NETCDF=/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20160801T0000Z/rosie_ens_kscale_ctc/engl_em00/profile_200/20160801_20160801T0000Z_global_profile_3hourly_200_05deg.nc
 ncdump -h "$NETCDF"
 python Tutorial.py --inspect-netcdf --input-netcdf "$NETCDF"
@@ -131,13 +131,14 @@ corresponding explicit names printed by `--inspect-netcdf`. If the file lacks
 a pressure coordinate and is not stored under a `profile_NNN` directory,
 supply `--input-pressure-hpa` to state the fixed level explicitly.
 
-The full-spherical map calls the `elliotmg-fix-spherical-kernel-unpacking`
-branch's `compute_geometry`, `compute_du3_angular_integral_global`,
+Both spherical maps call the `elliotmg-fix-spherical-kernel-unpacking`
+branch's `compute_geometry`, `compute_du3_angular_integral_subset`,
 `get_integration_kernels`, and `integrate_over_scales` implementations
-directly. The quadratic map uses `compute_du3_angular_integral_subset` with
-per-origin cap-restricted active indices. Geometry is prepared in-memory in
-bounded origin-latitude chunks at the source grid resolution. Missing branch helpers are an error; the script
-does not substitute a Cartesian calculation. The spherical and
+directly, using the corresponding `spherical` or `tangent_quadratic` method
+and per-origin cap-restricted active indices. Geometry is prepared in-memory
+in bounded origin-latitude chunks at the source grid resolution. Missing
+branch helpers are an error; the script does not substitute a Cartesian
+calculation. The spherical and
 tangent-quadratic Python methods use spherical mollifier normalization but
 `r dr` transfer integration (not `R sin(r/R) dr`), uniform angular sample
 weighting, and horizontal increments only. The separate Cartesian Python
