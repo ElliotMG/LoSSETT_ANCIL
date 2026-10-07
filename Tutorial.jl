@@ -70,8 +70,28 @@ function calculate(u, v, w, longitude, latitude, geometry)
             xdim=4,
             ydim=3,
         )
+    elseif geometry == :tangent_quadratic
+        return kinetic_energy_transfer(
+            u,
+            v,
+            w,
+            longitude,
+            latitude,
+            [LENGTH_SCALE_METRES];
+            max_radius=SPHERICAL_MAX_RADIUS,
+            geometry=:tangent_quadratic,
+            sphere_radius=SPHERE_RADIUS_METRES,
+            xdim=4,
+            ydim=3,
+            use_angular_weights=false,
+        )
     end
     error("Unknown geometry: $geometry")
+end
+
+function geometry_label(geometry)
+    geometry == :tangent_quadratic && return "Tangent quadratic"
+    return uppercasefirst(string(geometry))
 end
 
 function calculate_and_save(input_directory, u, v, w,
@@ -99,7 +119,7 @@ function calculate_and_save(input_directory, u, v, w,
     result_path = joinpath(input_directory, "$(geometry)_julia.csv")
     write_contour_csv(result_path, field)
     println(
-        "LoSSETT.jl $(uppercasefirst(string(geometry))) core runtime: ",
+        "LoSSETT.jl $(geometry_label(geometry)) core runtime: ",
         round(elapsed_seconds; digits=3),
         " s",
     )
@@ -154,6 +174,8 @@ function main(args)
     pressure = parse_vector(manifest, "pressure", Float64)
     latitude = parse_vector(manifest, "latitude", Float64)
     longitude = parse_vector(manifest, "longitude", Float64)
+    any(abs.(latitude) .>= 90.0) &&
+        error("Tangent-quadratic tutorial geometry does not support polar grid points")
     parse(Float64, manifest["length_scale_m"]) == LENGTH_SCALE_METRES ||
         error("Input manifest must specify the 500 km map scale")
     parse(Float64, manifest["map_pressure_hpa"]) == MAP_PRESSURE_HPA ||
@@ -176,6 +198,10 @@ function main(args)
         input_directory, u, v, w, longitude, latitude,
         pressure_index, :spherical,
     )
+    tangent_quadratic_path, tangent_quadratic_runtime = calculate_and_save(
+        input_directory, u, v, w, longitude, latitude,
+        pressure_index, :tangent_quadratic,
+    )
     date_compact = replace(manifest["date"], "-" => "")
 
     python = get(ENV, "PYTHON", "python")
@@ -192,8 +218,17 @@ function main(args)
         joinpath(pwd(), "Tutorial_spherical_julia_$date_compact.png"),
         spherical_runtime,
     )
+    plot_python_result(
+        python, plotter, tangent_quadratic_path, manifest_path,
+        "LoSSETT.jl Tangent quadratic (850 hPa, 500 km)",
+        joinpath(pwd(), "Tutorial_tangent_quadratic_julia_$date_compact.png"),
+        tangent_quadratic_runtime,
+    )
     plot_difference(python, plotter, manifest_path, input_directory, :cartesian)
     plot_difference(python, plotter, manifest_path, input_directory, :spherical)
+    plot_difference(
+        python, plotter, manifest_path, input_directory, :tangent_quadratic
+    )
 end
 
 main(ARGS)

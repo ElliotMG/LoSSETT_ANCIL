@@ -1,4 +1,4 @@
-"""Prepare ERA5 inputs and compare Cartesian and spherical LoSSETT cores."""
+"""Prepare ERA5 inputs and compare Cartesian, spherical, and tangent-quadratic cores."""
 
 import argparse
 import datetime as dt
@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument("--output", type=Path, help="output image for --plot-result")
     parser.add_argument(
         "--plot-difference",
-        choices=("cartesian", "spherical"),
+        choices=("cartesian", "spherical", "tangent_quadratic"),
         help="plot Python minus Julia fields for this geometry",
     )
     parser.add_argument("--python-result", type=Path)
@@ -274,12 +274,39 @@ def require_spherical_python_api():
     except ImportError as error:
         raise RuntimeError(
             "The Python spherical tutorial requires LoSSETT's "
-            "'spherical_geometry' branch. Install that branch in this Python "
+            "'elliotmg-fix-spherical-kernel-unpacking' branch. Install that branch in this Python "
             "environment as described in README.md; no Cartesian fallback is used."
         ) from error
 
     return (
         compute_du3_angular_integral_global,
+        RADIUS_EARTH,
+        build_distance_bins,
+        compute_geometry,
+        get_integration_kernels,
+        integrate_over_scales,
+    )
+
+
+def require_tangent_quadratic_python_api():
+    try:
+        from lossett.calc.field_increments import compute_du3_angular_integral_subset
+        from lossett.calc.spherical_geometry import (
+            RADIUS_EARTH,
+            build_distance_bins,
+            compute_geometry,
+        )
+        from lossett.filtering.get_integration_kernels import get_integration_kernels
+        from lossett.filtering.integration import integrate_over_scales
+    except ImportError as error:
+        raise RuntimeError(
+            "The Python tangent-quadratic tutorial requires LoSSETT's "
+            "'elliotmg-fix-spherical-kernel-unpacking' branch. Install that "
+            "branch as described in README.md; no spherical fallback is used."
+        ) from error
+
+    return (
+        compute_du3_angular_integral_subset,
         RADIUS_EARTH,
         build_distance_bins,
         compute_geometry,
@@ -398,6 +425,144 @@ def calculate_python_spherical(dataset, helpers):
     return np.asarray(transfer.compute().values)
 
 
+def calculate_python_tangent_quadratic(dataset, helpers):
+    import xarray as xr
+
+    (
+        angular_integral_subset,
+        earth_radius,
+        build_distance_bins,
+        compute_geometry,
+        get_integration_kernels,
+        integrate_over_scales,
+    ) = helpers
+    latitude = np.asarray(dataset.latitude.values, dtype=np.float64)
+    longitude = np.asarray(dataset.longitude.values, dtype=np.float64)
+    if np.any(np.abs(latitude) >= 90.0):
+        raise ValueError(
+            "Python tangent-quadratic geometry does not support polar grid points"
+        )
+    dlon = np.diff(longitude)
+    dlat = np.diff(latitude)
+    if not np.allclose(dlon, dlon[0]) or not np.allclose(dlat, dlat[0]):
+        raise ValueError(
+            "Python tangent-quadratic geometry requires a regular lat/lon grid"
+        )
+    if longitude[-1] - longitude[0] >= 360.0:
+        raise ValueError("Longitude grid must not duplicate the 360-degree endpoint")
+
+    selected_u = np.asarray(dataset.u.isel(time=0).values, dtype=np.float64)
+    selected_v = np.asarray(dataset.v.isel(time=0).values, dtype=np.float64)
+    pressure = np.asarray(dataset.pressure.values, dtype=np.float64)
+    npressure, nlat, nlon = selected_u.shape
+    bin_count = nlon // 2
+    distance_edges, radii = build_distance_bins(
+        bin_count, max_r=np.nextafter(np.pi * earth_radius, np.inf)
+    )
+    delta_longitudes = (np.arange(nlon) - nlon // 2) * dlon[0]
+    geometry = compute_geometry(
+        latitude,
+        latitude,
+        delta_longitudes,
+        distance_edges,
+        radius=earth_radius,
+        dtype=np.float64,
+        bin_dtype=np.uint8 if bin_count < 256 else np.uint16,
+        trig_fns=True,
+    )
+
+    included_radial_bins = np.flatnonzero(
+        radii <= 2.0 * LENGTH_SCALE_METRES
+    )
+    if included_radial_bins.size == 0:
+        raise ValueError("No radial bins fall within the tangent-quadratic kernel")
+    last_radial_bin = int(included_radial_bins[-1])
+    cap_radius = distance_edges[last_radial_bin + 1]
+    distances = geometry.great_circle_distance.values
+    distance_bins = geometry.great_circle_distance_bin.values
+    active_indices = [
+        np.where(
+            (distances[index] < cap_radius)
+            & (distance_bins[index] <= last_radial_bin)
+        )
+        for index in range(nlat)
+    ]
+
+    angular_field = np.empty(
+        (bin_count, npressure, nlat, nlon), dtype=np.float64
+    )
+    for origin_longitude_index in range(nlon):
+        longitude_shift = origin_longitude_index - nlon // 2
+        for pressure_index in range(npressure):
+            rolled_u = xr.DataArray(
+                np.roll(selected_u[pressure_index], -longitude_shift, axis=1),
+                dims=("latitude", "longitude"),
+                coords={"latitude": latitude, "longitude": delta_longitudes},
+            )
+            rolled_v = xr.DataArray(
+                np.roll(selected_v[pressure_index], -longitude_shift, axis=1),
+                dims=("latitude", "longitude"),
+                coords={"latitude": latitude, "longitude": delta_longitudes},
+            )
+            origin_coords = {
+                "origin_latitude": latitude,
+                "latitude": ("origin_latitude", latitude),
+            }
+            origin_u = xr.DataArray(
+                selected_u[pressure_index, :, origin_longitude_index],
+                dims=("origin_latitude",),
+                coords=origin_coords,
+            )
+            origin_v = xr.DataArray(
+                selected_v[pressure_index, :, origin_longitude_index],
+                dims=("origin_latitude",),
+                coords=origin_coords,
+            )
+            integral = angular_integral_subset(
+                rolled_u,
+                rolled_v,
+                origin_u,
+                origin_v,
+                geometry,
+                active_indices,
+                bin_count,
+                dtype=np.float64,
+                use_angular_weights=False,
+                method="tangent_quadratic",
+            )
+            angular_field[:, pressure_index, :, origin_longitude_index] = integral.T
+
+    integrand = xr.DataArray(
+        angular_field,
+        dims=("r", "pressure", "latitude", "longitude"),
+        coords={
+            "r": radii,
+            "pressure": pressure,
+            "latitude": latitude,
+            "longitude": longitude,
+        },
+    )
+    kernels = get_integration_kernels(
+        radii,
+        [LENGTH_SCALE_METRES],
+        normalization="spherical",
+        sphere_radius=earth_radius,
+        return_deriv=True,
+    )
+    transfer = (
+        integrate_over_scales(
+            integrand,
+            kernels.dG_dr * kernels.dG_dr.r,
+            ratio_rmax_to_ell=2.0,
+        )
+        / 4.0
+    )
+    transfer = transfer.sel(
+        length_scale=LENGTH_SCALE_METRES, pressure=MAP_PRESSURE_HPA
+    )
+    return np.asarray(transfer.compute().values)
+
+
 def save_result(field, path):
     np.savetxt(path, field, delimiter=",", fmt="%.17g")
     return path
@@ -410,11 +575,16 @@ def save_python_result(field, elapsed, geometry, output_directory, date_string, 
     output = Path(
         f"Tutorial_{geometry}_python_{date_string.replace('-', '')}.png"
     )
+    geometry_labels = {
+        "cartesian": "Cartesian",
+        "spherical": "Spherical",
+        "tangent_quadratic": "Tangent quadratic",
+    }
     plot_map(
         field,
         dataset.latitude.values,
         dataset.longitude.values,
-        f"LoSSETT.py {geometry.capitalize()} (850 hPa, 500 km)",
+        f"LoSSETT.py {geometry_labels[geometry]} (850 hPa, 500 km)",
         output,
         MAP_LIMIT,
         elapsed,
@@ -503,9 +673,27 @@ def prepare_and_run(date):
         velocities,
     )
     print(f"LoSSETT.py Spherical core runtime: {spherical_runtime:.3f} s")
+    tangent_quadratic_helpers = require_tangent_quadratic_python_api()
+    started = time.perf_counter()
+    tangent_quadratic_field = calculate_python_tangent_quadratic(
+        velocities, tangent_quadratic_helpers
+    )
+    tangent_quadratic_runtime = time.perf_counter() - started
+    save_python_result(
+        tangent_quadratic_field,
+        tangent_quadratic_runtime,
+        "tangent_quadratic",
+        output_directory,
+        date_string,
+        velocities,
+    )
+    print(
+        "LoSSETT.py Tangent quadratic core runtime: "
+        f"{tangent_quadratic_runtime:.3f} s"
+    )
     print(
         "Python results are ready. Run Tutorial.jl with this input directory "
-        "to create the two Julia maps and both Python - Julia difference maps."
+        "to create all three Julia maps and Python - Julia difference maps."
     )
 
 
