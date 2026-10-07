@@ -16,7 +16,7 @@ DEFAULT_NETCDF_PATH = Path(
 LENGTH_SCALE_METRES = 500_000.0
 MAP_PRESSURE_HPA = 200.0
 MAP_LIMIT = 5e-5
-TUTORIAL_GRID_SPACING_DEGREES = 4.0
+ORIGIN_LATITUDE_CHUNK = 8
 
 
 def parse_args():
@@ -434,9 +434,9 @@ def _selected_wind_field(
                 "Select a single member/realization before running."
             )
         variable = variable.isel({dimension: 0}, drop=True)
-    variable = variable.reset_coords(drop=True)
     if "pressure" in variable.coords and "pressure" not in variable.dims:
         variable = variable.drop_vars("pressure")
+    variable = variable.reset_coords(drop=True)
     rename_dims = {
         time_dimension: "time",
         latitude_dimension: "latitude",
@@ -628,25 +628,6 @@ def prepare_netcdf_inputs(path, requested_date, args):
     if np.any(np.abs(latitude) >= 90.0):
         raise ValueError("Exact pole coordinates are unsupported by quadratic geometry.")
 
-    factors = []
-    for spacing, name in ((dlat[0], "latitude"), (dlon[0], "longitude")):
-        factor = int(round(TUTORIAL_GRID_SPACING_DEGREES / spacing))
-        if factor < 1 or not np.isclose(
-            factor * spacing, TUTORIAL_GRID_SPACING_DEGREES, atol=1e-6
-        ):
-            raise ValueError(
-                f"{name.capitalize()} spacing {spacing} degrees cannot be "
-                f"coarsened exactly to the tutorial's "
-                f"{TUTORIAL_GRID_SPACING_DEGREES}-degree grid."
-            )
-        factors.append(factor)
-    latitude_factor, longitude_factor = factors
-    if latitude.size % latitude_factor or longitude.size % longitude_factor:
-        raise ValueError(
-            "Input grid dimensions must divide evenly into 4-degree coarsening "
-            "blocks; inspect the coordinate ranges and dimensions."
-        )
-
     velocities = xr.Dataset(
         {
             "u": u,
@@ -654,12 +635,6 @@ def prepare_netcdf_inputs(path, requested_date, args):
             "w": xr.zeros_like(u).rename("w"),
         }
     )
-    velocities = velocities.coarsen(
-        latitude=latitude_factor,
-        longitude=longitude_factor,
-        boundary="exact",
-        coord_func="mean",
-    ).mean()
     velocities = velocities.transpose("time", "pressure", "latitude", "longitude")
     return velocities, selected_time
 
@@ -731,7 +706,7 @@ def run_python_calculation(dataset):
 
 def require_spherical_python_api():
     try:
-        from lossett.calc.field_increments import compute_du3_angular_integral_global
+        from lossett.calc.field_increments import compute_du3_angular_integral_subset
         from lossett.calc.spherical_geometry import (
             RADIUS_EARTH,
             build_distance_bins,
@@ -747,7 +722,7 @@ def require_spherical_python_api():
         ) from error
 
     return (
-        compute_du3_angular_integral_global,
+        compute_du3_angular_integral_subset,
         RADIUS_EARTH,
         build_distance_bins,
         compute_geometry,
@@ -784,6 +759,16 @@ def require_tangent_quadratic_python_api():
 
 
 def calculate_python_spherical(dataset, helpers):
+    return _calculate_python_spherical_method(dataset, helpers, "spherical")
+
+
+def calculate_python_tangent_quadratic(dataset, helpers):
+    return _calculate_python_spherical_method(
+        dataset, helpers, "tangent_quadratic"
+    )
+
+
+def _calculate_python_spherical_method(dataset, helpers, method):
     import xarray as xr
 
     (
@@ -796,125 +781,15 @@ def calculate_python_spherical(dataset, helpers):
     ) = helpers
     latitude = np.asarray(dataset.latitude.values, dtype=np.float64)
     longitude = np.asarray(dataset.longitude.values, dtype=np.float64)
-    dlon = np.diff(longitude)
-    dlat = np.diff(latitude)
-    if not np.allclose(dlon, dlon[0]) or not np.allclose(dlat, dlat[0]):
-        raise ValueError("Python spherical geometry requires a regular lat/lon grid")
-    if longitude[-1] - longitude[0] >= 360.0:
-        raise ValueError("Longitude grid must not duplicate the 360-degree endpoint")
-
-    selected_u = np.asarray(dataset.u.isel(time=0).values, dtype=np.float64)
-    selected_v = np.asarray(dataset.v.isel(time=0).values, dtype=np.float64)
-    pressure = np.asarray(dataset.pressure.values, dtype=np.float64)
-    npressure, nlat, nlon = selected_u.shape
-    bin_count = nlon // 2
-    distance_edges, radii = build_distance_bins(
-        # Keep exact antipodes inside the final digitize bin.
-        bin_count, max_r=np.nextafter(np.pi * earth_radius, np.inf)
-    )
-    delta_longitudes = (np.arange(nlon) - nlon // 2) * dlon[0]
-    geometry = compute_geometry(
-        latitude,
-        latitude,
-        delta_longitudes,
-        distance_edges,
-        radius=earth_radius,
-        dtype=np.float64,
-        bin_dtype=np.uint8 if bin_count < 256 else np.uint16,
-        trig_fns=True,
-    )
-
-    angular_field = np.empty(
-        (bin_count, npressure, nlat, nlon), dtype=np.float64
-    )
-    for origin_longitude_index in range(nlon):
-        longitude_shift = origin_longitude_index - nlon // 2
-        for pressure_index in range(npressure):
-            rolled_u = xr.DataArray(
-                np.roll(selected_u[pressure_index], -longitude_shift, axis=1),
-                dims=("latitude", "longitude"),
-                coords={"latitude": latitude, "longitude": delta_longitudes},
-            )
-            rolled_v = xr.DataArray(
-                np.roll(selected_v[pressure_index], -longitude_shift, axis=1),
-                dims=("latitude", "longitude"),
-                coords={"latitude": latitude, "longitude": delta_longitudes},
-            )
-            origin_u = xr.DataArray(
-                selected_u[pressure_index, :, origin_longitude_index],
-                dims=("origin_latitude",),
-                coords={"origin_latitude": latitude},
-            )
-            origin_v = xr.DataArray(
-                selected_v[pressure_index, :, origin_longitude_index],
-                dims=("origin_latitude",),
-                coords={"origin_latitude": latitude},
-            )
-            integral, _ = angular_integral(
-                rolled_u,
-                rolled_v,
-                origin_u,
-                origin_v,
-                geometry,
-                bin_count,
-                dtype=np.float64,
-                use_angular_weights=False,
-            )
-            angular_field[:, pressure_index, :, origin_longitude_index] = integral.T
-
-    integrand = xr.DataArray(
-        angular_field,
-        dims=("r", "pressure", "latitude", "longitude"),
-        coords={
-            "r": radii,
-            "pressure": pressure,
-            "latitude": latitude,
-            "longitude": longitude,
-        },
-    )
-    kernels = get_integration_kernels(
-        radii,
-        [LENGTH_SCALE_METRES],
-        normalization="spherical",
-        sphere_radius=earth_radius,
-        return_deriv=True,
-    )
-    transfer = (
-        integrate_over_scales(
-            integrand,
-            kernels.dG_dr * kernels.dG_dr.r,
-            ratio_rmax_to_ell=2.0,
-        )
-        / 4.0
-    )
-    transfer = transfer.sel(
-        length_scale=LENGTH_SCALE_METRES, pressure=MAP_PRESSURE_HPA
-    )
-    return np.asarray(transfer.compute().values)
-
-
-def calculate_python_tangent_quadratic(dataset, helpers):
-    import xarray as xr
-
-    (
-        angular_integral_subset,
-        earth_radius,
-        build_distance_bins,
-        compute_geometry,
-        get_integration_kernels,
-        integrate_over_scales,
-    ) = helpers
-    latitude = np.asarray(dataset.latitude.values, dtype=np.float64)
-    longitude = np.asarray(dataset.longitude.values, dtype=np.float64)
     if np.any(np.abs(latitude) >= 90.0):
         raise ValueError(
-            "Python tangent-quadratic geometry does not support polar grid points"
+            f"Python {method} geometry does not support exact polar grid points"
         )
     dlon = np.diff(longitude)
     dlat = np.diff(latitude)
     if not np.allclose(dlon, dlon[0]) or not np.allclose(dlat, dlat[0]):
         raise ValueError(
-            "Python tangent-quadratic geometry requires a regular lat/lon grid"
+            f"Python {method} geometry requires a regular lat/lon grid"
         )
     if longitude[-1] - longitude[0] >= 360.0:
         raise ValueError("Longitude grid must not duplicate the 360-degree endpoint")
@@ -927,108 +802,165 @@ def calculate_python_tangent_quadratic(dataset, helpers):
     distance_edges, radii = build_distance_bins(
         bin_count, max_r=np.nextafter(np.pi * earth_radius, np.inf)
     )
-    delta_longitudes = (np.arange(nlon) - nlon // 2) * dlon[0]
-    geometry = compute_geometry(
-        latitude,
-        latitude,
-        delta_longitudes,
-        distance_edges,
-        radius=earth_radius,
-        dtype=np.float64,
-        bin_dtype=np.uint8 if bin_count < 256 else np.uint16,
-        trig_fns=True,
-    )
-
-    included_radial_bins = np.flatnonzero(
-        radii <= 2.0 * LENGTH_SCALE_METRES
-    )
+    included_radial_bins = np.flatnonzero(radii <= 2.0 * LENGTH_SCALE_METRES)
     if included_radial_bins.size == 0:
-        raise ValueError("No radial bins fall within the tangent-quadratic kernel")
+        raise ValueError(f"No radial bins fall within the {method} kernel support")
     last_radial_bin = int(included_radial_bins[-1])
+    radii_used = radii[: last_radial_bin + 1]
     cap_radius = distance_edges[last_radial_bin + 1]
-    distances = geometry.great_circle_distance.values
-    distance_bins = geometry.great_circle_distance_bin.values
-    active_indices = [
-        np.where(
-            (distances[index] < cap_radius)
-            & (distance_bins[index] <= last_radial_bin)
-        )
-        for index in range(nlat)
-    ]
-
-    angular_field = np.empty(
-        (bin_count, npressure, nlat, nlon), dtype=np.float64
-    )
-    for origin_longitude_index in range(nlon):
-        longitude_shift = origin_longitude_index - nlon // 2
-        for pressure_index in range(npressure):
-            rolled_u = xr.DataArray(
-                np.roll(selected_u[pressure_index], -longitude_shift, axis=1),
-                dims=("latitude", "longitude"),
-                coords={"latitude": latitude, "longitude": delta_longitudes},
-            )
-            rolled_v = xr.DataArray(
-                np.roll(selected_v[pressure_index], -longitude_shift, axis=1),
-                dims=("latitude", "longitude"),
-                coords={"latitude": latitude, "longitude": delta_longitudes},
-            )
-            origin_coords = {
-                "origin_latitude": latitude,
-                "latitude": ("origin_latitude", latitude),
-            }
-            origin_u = xr.DataArray(
-                selected_u[pressure_index, :, origin_longitude_index],
-                dims=("origin_latitude",),
-                coords=origin_coords,
-            )
-            origin_v = xr.DataArray(
-                selected_v[pressure_index, :, origin_longitude_index],
-                dims=("origin_latitude",),
-                coords=origin_coords,
-            )
-            integral = angular_integral_subset(
-                rolled_u,
-                rolled_v,
-                origin_u,
-                origin_v,
-                geometry,
-                active_indices,
-                bin_count,
-                dtype=np.float64,
-                use_angular_weights=False,
-                method="tangent_quadratic",
-            )
-            angular_field[:, pressure_index, :, origin_longitude_index] = integral.T
-
-    integrand = xr.DataArray(
-        angular_field,
-        dims=("r", "pressure", "latitude", "longitude"),
-        coords={
-            "r": radii,
-            "pressure": pressure,
-            "latitude": latitude,
-            "longitude": longitude,
-        },
-    )
+    delta_longitudes = (np.arange(nlon) - nlon // 2) * dlon[0]
     kernels = get_integration_kernels(
-        radii,
+        radii_used,
         [LENGTH_SCALE_METRES],
         normalization="spherical",
         sphere_radius=earth_radius,
         return_deriv=True,
     )
-    transfer = (
-        integrate_over_scales(
-            integrand,
-            kernels.dG_dr * kernels.dG_dr.r,
-            ratio_rmax_to_ell=2.0,
+    output = np.empty((nlat, nlon), dtype=np.float64)
+    for latitude_start in range(0, nlat, ORIGIN_LATITUDE_CHUNK):
+        latitude_stop = min(latitude_start + ORIGIN_LATITUDE_CHUNK, nlat)
+        origin_latitudes = latitude[latitude_start:latitude_stop]
+        raw_geometry = compute_geometry(
+            origin_latitudes,
+            latitude,
+            delta_longitudes,
+            distance_edges,
+            radius=earth_radius,
+            dtype=np.float64,
+            bin_dtype=np.uint8 if bin_count < 256 else np.uint16,
+            trig_fns=False,
         )
-        / 4.0
-    )
-    transfer = transfer.sel(
-        length_scale=LENGTH_SCALE_METRES, pressure=MAP_PRESSURE_HPA
-    )
-    return np.asarray(transfer.compute().values)
+        initial_bearing = raw_geometry.initial_bearing.values
+        final_bearing = raw_geometry.final_bearing.values
+        geometry = xr.Dataset(
+            {
+                "great_circle_distance": raw_geometry.great_circle_distance,
+                "great_circle_distance_bin": raw_geometry.great_circle_distance_bin,
+                "sine_initial_bearing": (
+                    raw_geometry.initial_bearing.dims,
+                    np.sin(initial_bearing),
+                ),
+                "cosine_initial_bearing": (
+                    raw_geometry.initial_bearing.dims,
+                    np.cos(initial_bearing),
+                ),
+                "sine_final_bearing": (
+                    raw_geometry.final_bearing.dims,
+                    np.sin(final_bearing),
+                ),
+                "cosine_final_bearing": (
+                    raw_geometry.final_bearing.dims,
+                    np.cos(final_bearing),
+                ),
+            },
+            coords=raw_geometry.coords,
+            attrs=raw_geometry.attrs,
+        )
+        del initial_bearing, final_bearing, raw_geometry
+        geometry.attrs["sphere_radius_m"] = earth_radius
+        distance_values = geometry.great_circle_distance.values
+        bin_values = geometry.great_circle_distance_bin.values
+        active_indices = [
+            np.where(
+                (distance_values[index] < cap_radius)
+                & (bin_values[index] <= last_radial_bin)
+            )
+            for index in range(latitude_stop - latitude_start)
+        ]
+        print(
+            f"LoSSETT.py {method}: origin latitudes "
+            f"{latitude_start + 1}-{latitude_stop} of {nlat}"
+        )
+        angular_field = np.empty(
+            (last_radial_bin + 1, latitude_stop - latitude_start, nlon),
+            dtype=np.float64,
+        )
+        for origin_longitude_index in range(nlon):
+            longitude_shift = origin_longitude_index - nlon // 2
+            for pressure_index in range(npressure):
+                rolled_u = xr.DataArray(
+                    np.roll(
+                        selected_u[pressure_index],
+                        -longitude_shift,
+                        axis=1,
+                    ),
+                    dims=("latitude", "longitude"),
+                    coords={"latitude": latitude, "longitude": delta_longitudes},
+                )
+                rolled_v = xr.DataArray(
+                    np.roll(
+                        selected_v[pressure_index],
+                        -longitude_shift,
+                        axis=1,
+                    ),
+                    dims=("latitude", "longitude"),
+                    coords={"latitude": latitude, "longitude": delta_longitudes},
+                )
+                origin_coords = {
+                    "origin_latitude": origin_latitudes,
+                    "latitude": ("origin_latitude", origin_latitudes),
+                }
+                origin_u = xr.DataArray(
+                    selected_u[
+                        pressure_index,
+                        latitude_start:latitude_stop,
+                        origin_longitude_index,
+                    ],
+                    dims=("origin_latitude",),
+                    coords=origin_coords,
+                )
+                origin_v = xr.DataArray(
+                    selected_v[
+                        pressure_index,
+                        latitude_start:latitude_stop,
+                        origin_longitude_index,
+                    ],
+                    dims=("origin_latitude",),
+                    coords=origin_coords,
+                )
+                integral = angular_integral(
+                    rolled_u,
+                    rolled_v,
+                    origin_u,
+                    origin_v,
+                    geometry,
+                    active_indices,
+                    bin_count,
+                    dtype=np.float64,
+                    use_angular_weights=False,
+                    method=method,
+                )
+                if isinstance(integral, tuple):
+                    integral = integral[0]
+                angular_field[:, :, origin_longitude_index] = integral[
+                    :, : last_radial_bin + 1
+                ].T
+
+        integrand = xr.DataArray(
+            angular_field[:, np.newaxis, :, :],
+            dims=("r", "pressure", "latitude", "longitude"),
+            coords={
+                "r": radii_used,
+                "pressure": pressure,
+                "latitude": origin_latitudes,
+                "longitude": longitude,
+            },
+        )
+        transfer = (
+            integrate_over_scales(
+                integrand,
+                kernels.dG_dr * kernels.dG_dr.r,
+                ratio_rmax_to_ell=2.0,
+            )
+            / 4.0
+        )
+        field = transfer.sel(
+            length_scale=LENGTH_SCALE_METRES,
+            pressure=MAP_PRESSURE_HPA,
+            drop=True,
+        )
+        output[latitude_start:latitude_stop] = np.asarray(field.compute().values)
+    return output
 
 
 def save_result(field, path):

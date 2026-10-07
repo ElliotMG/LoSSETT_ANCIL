@@ -32,7 +32,7 @@ This will install as the user installation but using the editable cloned code. P
 ## Python and Julia tutorial comparisons
 
 `Tutorial.py` reads the regular lat/lon NetCDF directly, selects the requested
-day and pressure level, coarsens the global grid to 4 degrees, and prepares a
+day and pressure level, preserves its native grid resolution, and prepares a
 shared input bundle for `Tutorial.jl`. The default source is
 `/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20160801T0000Z/rosie_ens_kscale_ctc/engl_em00/profile_200/20160801_20160801T0000Z_global_profile_3hourly_200_05deg.nc`.
 The default target is 200 hPa, matching the `profile_200` directory. If the
@@ -69,12 +69,17 @@ pressure):
 * `Tutorial_tangent_quadratic_julia_20160801_200hPa.png`
 * `Tutorial_tangent_quadratic_python_minus_julia_20160801_200hPa.png`
 
-All six implementation fields use the same prepared 4-degree global grid,
-selected 200 hPa u/v input (w is zero), and 500 km scale. `Tutorial.py`
-requires regular, global latitude/longitude coordinates whose spacing divides
-evenly into 4 degrees (a 0.5-degree source coarsens in blocks of 8). It rejects
-duplicated longitude endpoints, non-global or non-regular grids, and exact
-poles. The Python quadratic method calls
+All six implementation fields use the same prepared native-resolution global
+grid, selected 200 hPa u/v input (w is zero), and 500 km scale. The supplied
+0.5-degree source is processed at 0.5 degrees; no spatial coarsening or
+subsampling is performed. `Tutorial.py` requires regular, global
+latitude/longitude coordinates and rejects duplicated longitude endpoints,
+non-global or non-regular grids, and exact poles. The Python spherical and
+quadratic calculations process origin latitudes in bounded chunks and restrict
+increments to the radial-kernel support to control memory use. Native
+resolution is substantially more computationally expensive than the previous
+HEALPix-reduced tutorial grid; allow a long run and adequate JASMIN memory.
+The Python quadratic method calls
 `compute_du3_angular_integral_subset(..., method="tangent_quadratic")` and
 restricts each origin to a spherical cap containing the radial bins used by
 the kernel (bin centers through 2 length scales). It therefore produces a
@@ -130,8 +135,8 @@ The full-spherical map calls the `elliotmg-fix-spherical-kernel-unpacking`
 branch's `compute_geometry`, `compute_du3_angular_integral_global`,
 `get_integration_kernels`, and `integrate_over_scales` implementations
 directly. The quadratic map uses `compute_du3_angular_integral_subset` with
-per-origin cap-restricted active indices. Geometry is prepared in-memory for
-the reduced tutorial grid. Missing branch helpers are an error; the script
+per-origin cap-restricted active indices. Geometry is prepared in-memory in
+bounded origin-latitude chunks at the source grid resolution. Missing branch helpers are an error; the script
 does not substitute a Cartesian calculation. The spherical and
 tangent-quadratic Python methods use spherical mollifier normalization but
 `r dr` transfer integration (not `R sin(r/R) dr`), uniform angular sample
@@ -167,7 +172,7 @@ the `python` command is not available to Julia. For another date, run
 `Tutorial.jl`.
 
 The runtime in each implementation title covers the core call and materialized
-result, not NetCDF I/O, grid coarsening, or plotting. Julia performs an
+result, not NetCDF I/O, or plotting. Julia performs an
 untimed full-case warm-up to exclude compilation; the Python Numba
 angular-integration kernel is separately warmed before timing. Comparisons are
 not expected to have zero differences: Cartesian implementations use different
