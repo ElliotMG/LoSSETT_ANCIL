@@ -5,7 +5,11 @@ const LENGTH_SCALE_METRES = 500_000.0
 const CARTESIAN_METRES_PER_DEGREE = 110_000.0
 const CARTESIAN_MAX_RADIUS = 10.0 * CARTESIAN_METRES_PER_DEGREE
 const SPHERICAL_MAX_RADIUS = deg2rad(10.0) * SPHERE_RADIUS_METRES
-const MAP_PRESSURE_HPA = 850.0
+const DEFAULT_MAP_PRESSURE_HPA = 200.0
+
+pressure_text(pressure_hpa) =
+    isinteger(pressure_hpa) ? string(Int(pressure_hpa)) : string(pressure_hpa)
+pressure_tag(pressure_hpa) = "$(pressure_text(pressure_hpa))hPa"
 
 function read_manifest(path)
     manifest = Dict{String, String}()
@@ -96,7 +100,7 @@ end
 
 function calculate_and_save(input_directory, u, v, w,
                             longitude, latitude, pressure_index,
-                            geometry)
+                            geometry, map_pressure_hpa)
     core_result() = calculate(u, v, w, longitude, latitude, geometry)
 
     warmup = core_result()
@@ -116,7 +120,8 @@ function calculate_and_save(input_directory, u, v, w,
         error("Julia $geometry core did not return the requested 500 km scale")
     field = result.transfer[scale_index, 1, pressure_index, :, :]
 
-    result_path = joinpath(input_directory, "$(geometry)_julia.csv")
+    tag = pressure_tag(map_pressure_hpa)
+    result_path = joinpath(input_directory, "$(geometry)_julia_$(tag).csv")
     write_contour_csv(result_path, field)
     println(
         "LoSSETT.jl $(geometry_label(geometry)) core runtime: ",
@@ -145,7 +150,8 @@ function plot_python_result(python, plotter, result_path, manifest_path,
 end
 
 function plot_difference(python, plotter, manifest_path, input_directory,
-                         geometry)
+                         geometry, map_pressure_hpa)
+    tag = pressure_tag(map_pressure_hpa)
     run(Cmd([
         python,
         plotter,
@@ -154,15 +160,17 @@ function plot_difference(python, plotter, manifest_path, input_directory,
         "--manifest",
         manifest_path,
         "--python-result",
-        joinpath(input_directory, "$(geometry)_python.csv"),
+        joinpath(input_directory, "$(geometry)_python_$(tag).csv"),
         "--julia-result",
-        joinpath(input_directory, "$(geometry)_julia.csv"),
+        joinpath(input_directory, "$(geometry)_julia_$(tag).csv"),
     ]))
 end
 
 function main(args)
-    length(args) <= 1 || error("Usage: julia Tutorial.jl [input-directory]")
-    input_directory = abspath(isempty(args) ? "Tutorial_input_20160801" : args[1])
+    length(args) <= 1 ||
+        error("Usage: julia Tutorial.jl [input-directory] (default pressure: 200 hPa)")
+    default_directory = "Tutorial_input_20160801_$(pressure_tag(DEFAULT_MAP_PRESSURE_HPA))"
+    input_directory = abspath(isempty(args) ? default_directory : args[1])
     manifest_path = joinpath(input_directory, "manifest.txt")
     manifest = read_manifest(manifest_path)
     shape = Tuple(parse.(Int, split(manifest["shape"], ',')))
@@ -174,60 +182,70 @@ function main(args)
     pressure = parse_vector(manifest, "pressure", Float64)
     latitude = parse_vector(manifest, "latitude", Float64)
     longitude = parse_vector(manifest, "longitude", Float64)
+    map_pressure_hpa = parse(Float64, manifest["map_pressure_hpa"])
     any(abs.(latitude) .>= 90.0) &&
         error("Tangent-quadratic tutorial geometry does not support polar grid points")
     parse(Float64, manifest["length_scale_m"]) == LENGTH_SCALE_METRES ||
         error("Input manifest must specify the 500 km map scale")
-    parse(Float64, manifest["map_pressure_hpa"]) == MAP_PRESSURE_HPA ||
-        error("Input manifest must specify the 850 hPa map level")
+    length(pressure) == 1 && isapprox(pressure[1], map_pressure_hpa; atol=0.01, rtol=0) ||
+        error("Input manifest pressure coordinate must match its requested map level")
     shape == (1, length(pressure), length(latitude), length(longitude)) ||
         error("Input manifest coordinates do not match its declared shape")
 
     u = read_velocity(joinpath(input_directory, "u.f64le"), shape)
     v = read_velocity(joinpath(input_directory, "v.f64le"), shape)
     w = read_velocity(joinpath(input_directory, "w.f64le"), shape)
-    pressure_index = findfirst(==(MAP_PRESSURE_HPA), pressure)
+    pressure_index = findfirst(
+        level -> isapprox(level, map_pressure_hpa; atol=0.01, rtol=0),
+        pressure,
+    )
     pressure_index === nothing &&
-        error("Pressure level $(MAP_PRESSURE_HPA) hPa is missing from the input bundle")
+        error("Pressure level $(map_pressure_hpa) hPa is missing from the input bundle")
 
     cartesian_path, cartesian_runtime = calculate_and_save(
         input_directory, u, v, w, longitude, latitude,
-        pressure_index, :cartesian,
+        pressure_index, :cartesian, map_pressure_hpa,
     )
     spherical_path, spherical_runtime = calculate_and_save(
         input_directory, u, v, w, longitude, latitude,
-        pressure_index, :spherical,
+        pressure_index, :spherical, map_pressure_hpa,
     )
     tangent_quadratic_path, tangent_quadratic_runtime = calculate_and_save(
         input_directory, u, v, w, longitude, latitude,
-        pressure_index, :tangent_quadratic,
+        pressure_index, :tangent_quadratic, map_pressure_hpa,
     )
     date_compact = replace(manifest["date"], "-" => "")
+    tag = pressure_tag(map_pressure_hpa)
 
     python = get(ENV, "PYTHON", "python")
     plotter = joinpath(@__DIR__, "Tutorial.py")
     plot_python_result(
         python, plotter, cartesian_path, manifest_path,
-        "LoSSETT.jl Cartesian (850 hPa, 500 km)",
-        joinpath(pwd(), "Tutorial_cartesian_julia_$date_compact.png"),
+        "LoSSETT.jl Cartesian ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
+        joinpath(pwd(), "Tutorial_cartesian_julia_$(date_compact)_$(tag).png"),
         cartesian_runtime,
     )
     plot_python_result(
         python, plotter, spherical_path, manifest_path,
-        "LoSSETT.jl Spherical (850 hPa, 500 km)",
-        joinpath(pwd(), "Tutorial_spherical_julia_$date_compact.png"),
+        "LoSSETT.jl Spherical ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
+        joinpath(pwd(), "Tutorial_spherical_julia_$(date_compact)_$(tag).png"),
         spherical_runtime,
     )
     plot_python_result(
         python, plotter, tangent_quadratic_path, manifest_path,
-        "LoSSETT.jl Tangent quadratic (850 hPa, 500 km)",
-        joinpath(pwd(), "Tutorial_tangent_quadratic_julia_$date_compact.png"),
+        "LoSSETT.jl Tangent quadratic ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
+        joinpath(pwd(), "Tutorial_tangent_quadratic_julia_$(date_compact)_$(tag).png"),
         tangent_quadratic_runtime,
     )
-    plot_difference(python, plotter, manifest_path, input_directory, :cartesian)
-    plot_difference(python, plotter, manifest_path, input_directory, :spherical)
     plot_difference(
-        python, plotter, manifest_path, input_directory, :tangent_quadratic
+        python, plotter, manifest_path, input_directory, :cartesian, map_pressure_hpa
+    )
+    plot_difference(
+        python, plotter, manifest_path, input_directory, :spherical, map_pressure_hpa
+    )
+    plot_difference(
+        python, plotter, manifest_path, input_directory, :tangent_quadratic,
+        map_pressure_hpa,
     )
 end
 
