@@ -60,20 +60,6 @@ function calculate(u, v, w, longitude, latitude, geometry)
             xdim=4,
             ydim=3,
         )
-    elseif geometry == :spherical
-        return kinetic_energy_transfer(
-            u,
-            v,
-            w,
-            longitude,
-            latitude,
-            [LENGTH_SCALE_METRES];
-            max_radius=SPHERICAL_MAX_RADIUS,
-            geometry=:spherical,
-            sphere_radius=SPHERE_RADIUS_METRES,
-            xdim=4,
-            ydim=3,
-        )
     elseif geometry == :tangent_quadratic
         return kinetic_energy_transfer(
             u,
@@ -169,7 +155,7 @@ end
 function main(args)
     length(args) <= 1 ||
         error("Usage: julia Tutorial.jl [input-directory] (default pressure: 200 hPa)")
-    default_directory = "Tutorial_input_20160801_$(pressure_tag(DEFAULT_MAP_PRESSURE_HPA))"
+    default_directory = "Tutorial_input_20050101_$(pressure_tag(DEFAULT_MAP_PRESSURE_HPA))"
     input_directory = abspath(isempty(args) ? default_directory : args[1])
     manifest_path = joinpath(input_directory, "manifest.txt")
     manifest = read_manifest(manifest_path)
@@ -206,10 +192,6 @@ function main(args)
         input_directory, u, v, w, longitude, latitude,
         pressure_index, :cartesian, map_pressure_hpa,
     )
-    spherical_path, spherical_runtime = calculate_and_save(
-        input_directory, u, v, w, longitude, latitude,
-        pressure_index, :spherical, map_pressure_hpa,
-    )
     tangent_quadratic_path, tangent_quadratic_runtime = calculate_and_save(
         input_directory, u, v, w, longitude, latitude,
         pressure_index, :tangent_quadratic, map_pressure_hpa,
@@ -226,12 +208,6 @@ function main(args)
         cartesian_runtime,
     )
     plot_python_result(
-        python, plotter, spherical_path, manifest_path,
-        "LoSSETT.jl Spherical ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
-        joinpath(pwd(), "Tutorial_spherical_julia_$(date_compact)_$(tag).png"),
-        spherical_runtime,
-    )
-    plot_python_result(
         python, plotter, tangent_quadratic_path, manifest_path,
         "LoSSETT.jl Tangent quadratic ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
         joinpath(pwd(), "Tutorial_tangent_quadratic_julia_$(date_compact)_$(tag).png"),
@@ -239,9 +215,6 @@ function main(args)
     )
     plot_difference(
         python, plotter, manifest_path, input_directory, :cartesian, map_pressure_hpa
-    )
-    plot_difference(
-        python, plotter, manifest_path, input_directory, :spherical, map_pressure_hpa
     )
     plot_difference(
         python, plotter, manifest_path, input_directory, :tangent_quadratic,

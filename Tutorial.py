@@ -8,10 +8,17 @@ from pathlib import Path
 import numpy as np
 
 
-DEFAULT_NETCDF_PATH = Path(
-    "/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20160801T0000Z/"
-    "rosie_ens_kscale_ctc/engl_em00/profile_200/"
-    "20160801_20160801T0000Z_global_profile_3hourly_200_05deg.nc"
+DEFAULT_INPUT_DIRECTORY = Path(
+    "/gws/ssde/j25b/kscale/USERS/dship/ERA5/3hourly"
+)
+DEFAULT_U_NETCDF_PATH = DEFAULT_INPUT_DIRECTORY / (
+    "era5_u_component_of_wind_200501_3h_0p5deg.nc"
+)
+DEFAULT_V_NETCDF_PATH = DEFAULT_INPUT_DIRECTORY / (
+    "era5_v_component_of_wind_200501_3h_0p5deg.nc"
+)
+DEFAULT_W_NETCDF_PATH = DEFAULT_INPUT_DIRECTORY / (
+    "era5_vertical_velocity_200502_3h_0p5deg.nc"
 )
 LENGTH_SCALE_METRES = 500_000.0
 MAP_PRESSURE_HPA = 200.0
@@ -26,13 +33,28 @@ def parse_args():
         nargs="*",
         type=int,
         metavar="DATE_COMPONENT",
-        help="date to select from the input NetCDF (default: 2016 8 1)",
+        help="date to select from the input NetCDF files (default: 2005 1 1)",
     )
     parser.add_argument(
-        "--input-netcdf",
+        "--u-netcdf",
         type=Path,
-        default=DEFAULT_NETCDF_PATH,
-        help=f"regular global lat/lon NetCDF input (default: {DEFAULT_NETCDF_PATH})",
+        default=DEFAULT_U_NETCDF_PATH,
+        help=f"ERA5 eastward-wind NetCDF input (default: {DEFAULT_U_NETCDF_PATH})",
+    )
+    parser.add_argument(
+        "--v-netcdf",
+        type=Path,
+        default=DEFAULT_V_NETCDF_PATH,
+        help=f"ERA5 northward-wind NetCDF input (default: {DEFAULT_V_NETCDF_PATH})",
+    )
+    parser.add_argument(
+        "--w-netcdf",
+        type=Path,
+        default=DEFAULT_W_NETCDF_PATH,
+        help=(
+            "ERA5 vertical-velocity NetCDF input "
+            f"(default: {DEFAULT_W_NETCDF_PATH})"
+        ),
     )
     parser.add_argument(
         "--map-pressure-hpa",
@@ -62,6 +84,7 @@ def parse_args():
     )
     parser.add_argument("--u-variable", help="override eastward-wind variable detection")
     parser.add_argument("--v-variable", help="override northward-wind variable detection")
+    parser.add_argument("--w-variable", help="override vertical-velocity variable detection")
     parser.add_argument(
         "--plot-result",
         type=Path,
@@ -86,7 +109,18 @@ def parse_args():
     if len(args.date) not in (0, 3):
         parser.error("provide either no date or all three values: YEAR MONTH DAY")
     if not args.date:
-        args.date = (2016, 8, 1)
+        args.date = (2005, 1, 1)
+    if args.date[0:2] != [2005, 1]:
+        parser.error("the ERA5 tutorial input must select a date in January 2005")
+    if (
+        args.w_netcdf == DEFAULT_W_NETCDF_PATH
+        and not args.w_netcdf.is_file()
+    ):
+        alternate_w = DEFAULT_INPUT_DIRECTORY / (
+            "era5_vertical_velocity_200501_3h_0p5deg.nc"
+        )
+        if alternate_w.is_file():
+            args.w_netcdf = alternate_w
     if args.plot_result is not None and (
         args.manifest is None
         or args.runtime is None
@@ -303,7 +337,7 @@ def _resolve_coordinate(dataset, override, role):
     return candidates[0]
 
 
-def _resolve_wind_variable(dataset, override, standard_name):
+def _resolve_wind_variable(dataset, override, standard_names, fallback_names):
     if override is not None:
         if override not in dataset.data_vars:
             raise ValueError(
@@ -314,12 +348,20 @@ def _resolve_wind_variable(dataset, override, standard_name):
     candidates = [
         name
         for name, variable in dataset.data_vars.items()
-        if str(variable.attrs.get("standard_name", "")).lower() == standard_name
+        if str(variable.attrs.get("standard_name", "")).lower() in standard_names
     ]
+    if not candidates:
+        candidates = [
+            name for name in fallback_names if name in dataset.data_vars
+        ]
     if len(candidates) != 1:
-        axis = "u-variable" if standard_name == "eastward_wind" else "v-variable"
+        axis = {
+            "eastward_wind": "u-variable",
+            "northward_wind": "v-variable",
+            "vertical_velocity": "w-variable",
+        }[next(iter(standard_names))]
         raise ValueError(
-            f"Could not identify exactly one {standard_name} variable from CF "
+            f"Could not identify exactly one wind variable from CF "
             f"metadata (found {candidates}). Use --inspect-netcdf and pass "
             f"--{axis} NAME."
         )
@@ -377,6 +419,131 @@ def _fixed_profile_pressure(path, explicit_pressure_hpa):
         "--input-pressure-hpa explicitly (or use a profile_NNN directory "
         "whose name unambiguously gives the fixed level)."
     )
+
+
+def _open_input_dataset(path):
+    import xarray as xr
+
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Input NetCDF file does not exist: {path}\n"
+            "On JASMIN, run this command from a node that can access the "
+            "/gws path, or pass the corresponding --*-netcdf option."
+        )
+    return xr.open_dataset(path)
+
+
+def _coordinate_names(source, args, path):
+    try:
+        time_name = _resolve_coordinate(source, args.time_coordinate, "time")
+        latitude_name = _resolve_coordinate(
+            source, args.latitude_coordinate, "latitude"
+        )
+        longitude_name = _resolve_coordinate(
+            source, args.longitude_coordinate, "longitude"
+        )
+        if args.pressure_coordinate is not None:
+            pressure_name = _resolve_coordinate(
+                source, args.pressure_coordinate, "pressure"
+            )
+        else:
+            pressure_candidates = [
+                name
+                for name, coordinate in source.coords.items()
+                if _metadata_matches(coordinate, "pressure")
+            ]
+            if len(pressure_candidates) > 1:
+                raise ValueError(
+                    f"Found multiple CF pressure coordinates "
+                    f"{pressure_candidates}; specify --pressure-coordinate."
+                )
+            pressure_name = pressure_candidates[0] if pressure_candidates else None
+    except ValueError as error:
+        raise ValueError(
+            f"{error}\nInput schema for {path}:\n"
+            "Run `python Tutorial.py --inspect-netcdf --u-netcdf "
+            f"{path}` and use the matching coordinate options."
+        ) from error
+    return time_name, latitude_name, longitude_name, pressure_name
+
+
+def _selected_file_field(
+    source, path, variable_name, coordinate_names, requested_date, args
+):
+    time_name, latitude_name, longitude_name, pressure_name = coordinate_names
+    coordinates = {
+        "time": source[time_name],
+        "latitude": source[latitude_name],
+        "longitude": source[longitude_name],
+    }
+    if pressure_name is not None:
+        coordinates["pressure"] = source[pressure_name]
+    for role, coordinate in coordinates.items():
+        if role == "pressure" and coordinate.ndim == 0:
+            continue
+        if coordinate.ndim != 1:
+            raise ValueError(
+                f"{role.capitalize()} coordinate {coordinate.name!r} in {path} "
+                f"must be one-dimensional; found dimensions {coordinate.dims}."
+            )
+    time_dimension = source[time_name].dims[0]
+    latitude_dimension = source[latitude_name].dims[0]
+    longitude_dimension = source[longitude_name].dims[0]
+    if pressure_name is not None:
+        pressure_hpa = np.atleast_1d(_pressure_in_hpa(source[pressure_name]))
+        matches = np.flatnonzero(
+            np.isclose(pressure_hpa, args.map_pressure_hpa, atol=0.01, rtol=0)
+        )
+        if matches.size != 1:
+            raise ValueError(
+                f"Expected exactly one {args.map_pressure_hpa:g} hPa sample in "
+                f"{path} pressure coordinate {pressure_name!r}; found "
+                f"{pressure_hpa.tolist()} hPa."
+            )
+        pressure_index = int(matches[0])
+        fixed_pressure_hpa = args.map_pressure_hpa
+        pressure_dimension = (
+            source[pressure_name].dims[0]
+            if source[pressure_name].ndim == 1
+            else None
+        )
+    else:
+        pressure_dimension = None
+        fixed_pressure_hpa, pressure_source = _fixed_profile_pressure(
+            path, args.input_pressure_hpa
+        )
+        if not np.isclose(
+            fixed_pressure_hpa, args.map_pressure_hpa, atol=0.01, rtol=0
+        ):
+            raise ValueError(
+                f"Fixed-level input indicates {fixed_pressure_hpa:g} hPa from "
+                f"{pressure_source}, but the requested map level is "
+                f"{args.map_pressure_hpa:g} hPa."
+            )
+        pressure_index = None
+
+    time_index = _same_day_time_index(source[time_name], requested_date)
+    selected = _selected_wind_field(
+        source,
+        variable_name,
+        time_dimension,
+        pressure_dimension,
+        latitude_dimension,
+        longitude_dimension,
+        time_index,
+        pressure_index,
+        fixed_pressure_hpa,
+    ).load()
+    latitude = np.asarray(source[latitude_name].values, dtype=np.float64)
+    longitude = np.asarray(source[longitude_name].values, dtype=np.float64)
+    selected_time = source[time_name].values[time_index]
+    selected = selected.assign_coords(
+        latitude=latitude,
+        longitude=((longitude + 180.0) % 360.0) - 180.0,
+        pressure=[args.map_pressure_hpa],
+        time=[selected_time],
+    ).sortby("latitude").sortby("longitude")
+    return selected, latitude, longitude, selected_time
 
 
 def _selected_wind_field(
@@ -452,193 +619,54 @@ def _selected_wind_field(
     return variable.transpose("time", "pressure", "latitude", "longitude")
 
 
-def prepare_netcdf_inputs(path, requested_date, args):
+def prepare_netcdf_inputs(paths, requested_date, args):
     import xarray as xr
 
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Input NetCDF file does not exist: {path}\n"
-            "On JASMIN, run this command from a node that can access the /gws path, "
-            "or pass --input-netcdf with a readable local copy."
-        )
-
-    with xr.open_dataset(path) as source:
+    names = (
+        ("u", paths["u"], args.u_variable, {"eastward_wind"}, ("u", "u_component_of_wind")),
+        ("v", paths["v"], args.v_variable, {"northward_wind"}, ("v", "v_component_of_wind")),
+        ("w", paths["w"], args.w_variable, {"vertical_velocity", "upward_air_velocity"}, ("w", "vertical_velocity")),
+    )
+    fields, times = {}, {}
+    latitude = longitude = None
+    reference_times = None
+    for role, path, override, standard_names, fallback_names in names:
+        source = _open_input_dataset(path)
         try:
-            time_name = _resolve_coordinate(
-                source, args.time_coordinate, "time"
-            )
-            latitude_name = _resolve_coordinate(
-                source, args.latitude_coordinate, "latitude"
-            )
-            longitude_name = _resolve_coordinate(
-                source, args.longitude_coordinate, "longitude"
-            )
-            if args.pressure_coordinate is not None:
-                pressure_name = _resolve_coordinate(
-                    source, args.pressure_coordinate, "pressure"
-                )
-            else:
-                pressure_candidates = [
-                    name
-                    for name, coordinate in source.coords.items()
-                    if _metadata_matches(coordinate, "pressure")
-                ]
-                if len(pressure_candidates) > 1:
-                    raise ValueError(
-                        "Found multiple CF pressure coordinates "
-                        f"{pressure_candidates}; specify --pressure-coordinate."
-                    )
-                pressure_name = (
-                    pressure_candidates[0] if pressure_candidates else None
-                )
-            u_name = _resolve_wind_variable(
-                source, args.u_variable, "eastward_wind"
-            )
-            v_name = _resolve_wind_variable(
-                source, args.v_variable, "northward_wind"
-            )
-        except ValueError as error:
-            raise ValueError(
-                f"{error}\nInput schema for {path}:\n"
-                "Run `python Tutorial.py --inspect-netcdf --input-netcdf "
-                f"{path}` and use its coordinate/variable names with the "
-                "matching --time-coordinate, --pressure-coordinate, "
-                "--latitude-coordinate, --longitude-coordinate, --u-variable, "
-                "and --v-variable options."
-            ) from error
-
-        coordinates = {
-            "time": source[time_name],
-            "latitude": source[latitude_name],
-            "longitude": source[longitude_name],
-        }
-        if pressure_name is not None:
-            coordinates["pressure"] = source[pressure_name]
-        for role, coordinate in coordinates.items():
-            if role == "pressure" and coordinate.ndim == 0:
-                continue
-            if coordinate.ndim != 1:
-                raise ValueError(
-                    f"{role.capitalize()} coordinate {coordinate.name!r} must "
-                    f"be one-dimensional; found dimensions {coordinate.dims}."
-                )
-        time_dimension = source[time_name].dims[0]
-        latitude_dimension = source[latitude_name].dims[0]
-        longitude_dimension = source[longitude_name].dims[0]
-        time_index = _same_day_time_index(source[time_name], requested_date)
-        if pressure_name is not None:
-            pressure_hpa = _pressure_in_hpa(source[pressure_name])
-            pressure_hpa = np.atleast_1d(pressure_hpa)
-            matches = np.flatnonzero(
-                np.isclose(
-                    pressure_hpa, args.map_pressure_hpa, atol=0.01, rtol=0
-                )
-            )
-            if matches.size != 1:
-                raise ValueError(
-                    f"Expected exactly one {args.map_pressure_hpa:g} hPa sample "
-                    f"in pressure coordinate {pressure_name!r}; found "
-                    f"{pressure_hpa.tolist()} hPa."
-                )
-            pressure_index = int(matches[0])
-            fixed_pressure_hpa = args.map_pressure_hpa
-            pressure_dimension = (
-                source[pressure_name].dims[0]
-                if source[pressure_name].ndim == 1
-                else None
-            )
-        else:
-            pressure_dimension = None
-            fixed_pressure_hpa, pressure_source = _fixed_profile_pressure(
-                path, args.input_pressure_hpa
-            )
-            if not np.isclose(
-                fixed_pressure_hpa, args.map_pressure_hpa, atol=0.01, rtol=0
-            ):
-                raise ValueError(
-                    f"Fixed-level input indicates {fixed_pressure_hpa:g} hPa from "
-                    f"{pressure_source}, but the requested map level is "
-                    f"{args.map_pressure_hpa:g} hPa."
-                )
-            print(
-                f"No pressure coordinate found; treating this as a fixed "
-                f"{fixed_pressure_hpa:g} hPa profile based on {pressure_source}."
-            )
-            pressure_index = None
-        latitude = np.asarray(source[latitude_name].values, dtype=np.float64)
-        longitude = np.asarray(source[longitude_name].values, dtype=np.float64)
-        selected_time = source[time_name].values[time_index]
-        u = _selected_wind_field(
-            source,
-            u_name,
-            time_dimension,
-            pressure_dimension,
-            latitude_dimension,
-            longitude_dimension,
-            time_index,
-            pressure_index,
-            fixed_pressure_hpa,
-        ).load()
-        v = _selected_wind_field(
-            source,
-            v_name,
-            time_dimension,
-            pressure_dimension,
-            latitude_dimension,
-            longitude_dimension,
-            time_index,
-            pressure_index,
-            fixed_pressure_hpa,
-        ).load()
-
-    if not np.all(np.isfinite(latitude)) or not np.all(np.isfinite(longitude)):
-        raise ValueError("Latitude and longitude coordinates must be finite.")
-    u = u.assign_coords(
-        latitude=latitude,
-        longitude=((longitude + 180.0) % 360.0) - 180.0,
-        pressure=[args.map_pressure_hpa],
-        time=[selected_time],
-    ).sortby("latitude").sortby("longitude")
-    v = v.assign_coords(
-        latitude=latitude,
-        longitude=((longitude + 180.0) % 360.0) - 180.0,
-        pressure=[args.map_pressure_hpa],
-        time=[selected_time],
-    ).sortby("latitude").sortby("longitude")
-
-    latitude = np.asarray(u.latitude.values, dtype=np.float64)
-    longitude = np.asarray(u.longitude.values, dtype=np.float64)
+            coordinate_names = _coordinate_names(source, args, path)
+            time_name, latitude_name, longitude_name, _ = coordinate_names
+            variable_name = _resolve_wind_variable(source, override, standard_names, fallback_names)
+            values = np.asarray(source[time_name].values).astype("datetime64[ns]")
+            if values.size < 2 or not np.all(np.diff(values) == np.timedelta64(3, "h")):
+                raise ValueError(f"{role} input {path} must have a regular 3-hourly time coordinate")
+            if reference_times is None:
+                reference_times = values
+            elif not np.array_equal(reference_times, values):
+                raise ValueError(f"u, v, and w inputs must have an identical common time coordinate; {path} differs")
+            field, file_latitude, file_longitude, selected_time = _selected_file_field(source, path, variable_name, coordinate_names, requested_date, args)
+            if latitude is None:
+                latitude, longitude = file_latitude, file_longitude
+            elif not (np.array_equal(latitude, file_latitude) and np.array_equal(longitude, file_longitude)):
+                raise ValueError("u, v, and w inputs must use identical latitude/longitude coordinates")
+            fields[role], times[role] = field, selected_time
+        finally:
+            source.close()
+    if not (times["u"] == times["v"] == times["w"]):
+        raise ValueError("u, v, and w inputs must contain the same selected timestamp")
+    latitude = np.asarray(fields["u"].latitude.values, dtype=np.float64)
+    longitude = np.asarray(fields["u"].longitude.values, dtype=np.float64)
     if latitude.size < 2 or longitude.size < 2:
         raise ValueError("The input needs at least two latitude and longitude points.")
-    dlat = np.diff(latitude)
-    dlon = np.diff(longitude)
+    dlat, dlon = np.diff(latitude), np.diff(longitude)
     if not np.allclose(dlat, dlat[0]) or not np.allclose(dlon, dlon[0]):
         raise ValueError("Input latitude/longitude coordinates must form a regular grid.")
     if np.any(dlat <= 0) or np.any(dlon <= 0):
         raise ValueError("Latitude/longitude coordinates must be strictly increasing.")
     if not np.isclose(longitude.size * dlon[0], 360.0, atol=1e-5):
-        raise ValueError(
-            "Longitude coordinate must cover one global cycle without duplicating "
-            "the endpoint."
-        )
-    if not np.isclose(
-        latitude[-1] - latitude[0] + dlat[0], 180.0, atol=max(dlat[0], 1e-5)
-    ):
-        raise ValueError("Latitude coordinate must cover the global pole-to-pole grid.")
+        raise ValueError("Longitude coordinate must cover one global cycle without duplicating the endpoint.")
     if np.any(np.abs(latitude) >= 90.0):
         raise ValueError("Exact pole coordinates are unsupported by quadratic geometry.")
-
-    velocities = xr.Dataset(
-        {
-            "u": u,
-            "v": v,
-            "w": xr.zeros_like(u).rename("w"),
-        }
-    )
-    velocities = velocities.transpose("time", "pressure", "latitude", "longitude")
-    return velocities, selected_time
-
-
+    return xr.Dataset(fields).transpose("time", "pressure", "latitude", "longitude"), times["u"]
 def write_input_bundle(dataset, output_directory, date_string, selected_time):
     dataset = dataset.transpose("time", "pressure", "latitude", "longitude")
     shape = dataset["u"].shape
@@ -1005,12 +1033,13 @@ def warmup_spherical_python_numba():
 
 
 def prepare_and_run(args):
-    helpers = require_spherical_python_api()
     year, month, day = args.date
     selected_date = dt.datetime(year, month, day)
     date_string = selected_date.strftime("%Y-%m-%d")
     velocities, selected_time = prepare_netcdf_inputs(
-        args.input_netcdf, selected_date, args
+        {"u": args.u_netcdf, "v": args.v_netcdf, "w": args.w_netcdf},
+        selected_date,
+        args,
     )
     if velocities.sizes["time"] != 1:
         raise ValueError(
@@ -1041,19 +1070,6 @@ def prepare_and_run(args):
     )
     print(f"LoSSETT.py Cartesian core runtime: {cartesian_runtime:.3f} s")
 
-    warmup_spherical_python_numba()
-    started = time.perf_counter()
-    spherical_field = calculate_python_spherical(velocities, helpers)
-    spherical_runtime = time.perf_counter() - started
-    save_python_result(
-        spherical_field,
-        spherical_runtime,
-        "spherical",
-        output_directory,
-        date_string,
-        velocities,
-    )
-    print(f"LoSSETT.py Spherical core runtime: {spherical_runtime:.3f} s")
     tangent_quadratic_helpers = require_tangent_quadratic_python_api()
     started = time.perf_counter()
     tangent_quadratic_field = calculate_python_tangent_quadratic(
@@ -1082,7 +1098,7 @@ def main():
     global MAP_PRESSURE_HPA
     args = parse_args()
     if args.inspect_netcdf:
-        inspect_netcdf_schema(args.input_netcdf)
+        inspect_netcdf_schema(args.u_netcdf)
         return
     if args.plot_result is not None:
         plot_result(

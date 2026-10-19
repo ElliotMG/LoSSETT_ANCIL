@@ -31,17 +31,19 @@ This will install as the user installation but using the editable cloned code. P
 
 ## Python and Julia tutorial comparisons
 
-`Tutorial.py` reads the regular lat/lon NetCDF directly, selects the requested
-day and pressure level, preserves its native grid resolution, and prepares a
-shared input bundle for `Tutorial.jl`. The default source is
-`/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20160801T0000Z/rosie_ens_kscale_ctc/engl_em00/profile_200/20160801_20160801T0000Z_global_profile_3hourly_200_05deg.nc`.
-The default target is 200 hPa, matching the `profile_200` directory. If the
-file has a CF pressure coordinate, the script selects and validates 200 hPa
-from that coordinate. If it has no pressure coordinate, the script explicitly
-reports that it treats the file as a fixed 200 hPa profile based on the
-`profile_200` path segment. For another fixed-level file, pass
-`--input-pressure-hpa`; `--map-pressure-hpa` sets the requested comparison
-level.
+`Tutorial.py` reads separate regular lat/lon ERA5 u, v, and vertical-velocity
+NetCDF files, selects a requested January 2005 timestamp and pressure level,
+preserves the native 0.5-degree grid, and prepares a shared input bundle for
+`Tutorial.jl`. The documented JASMIN defaults are
+`/gws/ssde/j25b/kscale/USERS/dship/ERA5/3hourly/era5_u_component_of_wind_200501_3h_0p5deg.nc`,
+the corresponding v file, and
+`era5_vertical_velocity_200502_3h_0p5deg.nc` (the apparent w filename-month
+typo is intentional in the default and is validated by the file contents).
+If only the 200501 w filename exists, the script uses that alternate default;
+an explicitly supplied `--w-netcdf` path is never substituted.
+The three files must have identical coordinates and a common regular 3-hourly
+time axis. Use `--u-netcdf`, `--v-netcdf`, and `--w-netcdf` to override them.
+The default target is 200 hPa; `--map-pressure-hpa` sets another level.
 
 Coordinate and wind-variable discovery uses CF metadata, not guessed variable
 names. Run `python Tutorial.py --inspect-netcdf` to print dimensions,
@@ -53,24 +55,20 @@ coordinate must declare Pa, hPa, mbar, or millibar units. The wind variables
 must represent eastward and northward wind, respectively. For an independent
 header check, run `ncdump -h "$NETCDF"` on JASMIN.
 
-The Julia script runs Cartesian, full-spherical, and `tangent_quadratic`
-methods from the prepared bundle, saves their maps, then creates one
-Python-minus-Julia difference map per method and prints max-absolute and RMS
-differences. Running both scripts produces nine PNGs (for the default date and
-pressure):
+The Julia script runs Cartesian and `tangent_quadratic` methods from the
+prepared bundle, saves their maps, then creates one Python-minus-Julia
+difference map per method and prints max-absolute and RMS differences.
+Running both scripts produces six PNGs (for the default date and pressure):
 
-* `Tutorial_cartesian_python_20160801_200hPa.png`
-* `Tutorial_cartesian_julia_20160801_200hPa.png`
-* `Tutorial_spherical_python_20160801_200hPa.png`
-* `Tutorial_spherical_julia_20160801_200hPa.png`
-* `Tutorial_cartesian_python_minus_julia_20160801_200hPa.png`
-* `Tutorial_spherical_python_minus_julia_20160801_200hPa.png`
-* `Tutorial_tangent_quadratic_python_20160801_200hPa.png`
-* `Tutorial_tangent_quadratic_julia_20160801_200hPa.png`
-* `Tutorial_tangent_quadratic_python_minus_julia_20160801_200hPa.png`
+* `Tutorial_cartesian_python_20050101_200hPa.png`
+* `Tutorial_cartesian_julia_20050101_200hPa.png`
+* `Tutorial_cartesian_python_minus_julia_20050101_200hPa.png`
+* `Tutorial_tangent_quadratic_python_20050101_200hPa.png`
+* `Tutorial_tangent_quadratic_julia_20050101_200hPa.png`
+* `Tutorial_tangent_quadratic_python_minus_julia_20050101_200hPa.png`
 
-All six implementation fields use the same prepared native-resolution global
-grid, selected 200 hPa u/v input (w is zero), and 500 km scale. The supplied
+All four implementation fields use the same prepared native-resolution global
+grid, selected 200 hPa u/v/w input, and 500 km scale. The supplied
 0.5-degree source is processed at 0.5 degrees; no spatial coarsening or
 subsampling is performed. `Tutorial.py` requires regular, global
 latitude/longitude coordinates and rejects duplicated longitude endpoints,
@@ -120,10 +118,10 @@ git -C "${TMPDIR:-/tmp}/LoSSETT-spherical" branch --show-current
 python -m pip install -e "${TMPDIR:-/tmp}/LoSSETT-spherical"
 python -m pip install numba numexpr
 python -c "from lossett.calc.spherical_geometry import compute_geometry; from lossett.calc.field_increments import compute_du3_angular_integral_subset; print('LoSSETT spherical and tangent-quadratic APIs are available')"
-export NETCDF=/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20160801T0000Z/rosie_ens_kscale_ctc/engl_em00/profile_200/20160801_20160801T0000Z_global_profile_3hourly_200_05deg.nc
+export NETCDF=/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20050101T0000Z/rosie_ens_kscale_ctc/engl_em00/profile_200/20050101_20050101T0000Z_global_profile_3hourly_200_05deg.nc
 ncdump -h "$NETCDF"
-python Tutorial.py --inspect-netcdf --input-netcdf "$NETCDF"
-python Tutorial.py 2016 08 01 --input-netcdf "$NETCDF" --map-pressure-hpa 200
+python Tutorial.py --inspect-netcdf --u-netcdf "$NETCDF"
+python Tutorial.py 2005 01 01 --map-pressure-hpa 200
 ```
 
 If CF metadata cannot identify a coordinate or wind field, rerun with the
@@ -161,7 +159,7 @@ git clone --branch elliotmg-add-quadratic-julia-geometry https://github.com/Elli
 git -C "${TMPDIR:-/tmp}/LoSSETT-julia" checkout 5578c463ab9863aff6b07abdb4ffdaeed6fead41
 julia --project="${TMPDIR:-/tmp}/LoSSETT-julia/Julia" -e 'using Pkg; Pkg.instantiate()'
 git -C "${TMPDIR:-/tmp}/LoSSETT-julia" rev-parse HEAD
-julia --project="${TMPDIR:-/tmp}/LoSSETT-julia/Julia" Tutorial.jl Tutorial_input_20160801_200hPa
+julia --project="${TMPDIR:-/tmp}/LoSSETT-julia/Julia" Tutorial.jl Tutorial_input_20050101_200hPa
 ```
 
 Confirm that the `rev-parse` output is
