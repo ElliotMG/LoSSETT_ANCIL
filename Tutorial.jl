@@ -152,6 +152,28 @@ function plot_difference(python, plotter, manifest_path, input_directory,
     ]))
 end
 
+function plot_comparison(python, plotter, manifest_path, input_directory,
+                         output_path, map_pressure_hpa)
+    tag = pressure_tag(map_pressure_hpa)
+    run(Cmd([
+        python,
+        plotter,
+        "--plot-comparison",
+        "--manifest",
+        manifest_path,
+        "--comparison-output",
+        output_path,
+        "--cartesian-python-result",
+        joinpath(input_directory, "cartesian_python_$(tag).csv"),
+        "--cartesian-julia-result",
+        joinpath(input_directory, "cartesian_julia_$(tag).csv"),
+        "--tangent-python-result",
+        joinpath(input_directory, "tangent_quadratic_python_$(tag).csv"),
+        "--tangent-julia-result",
+        joinpath(input_directory, "tangent_quadratic_julia_$(tag).csv"),
+    ]))
+end
+
 function process_bundle(input_directory, python, plotter, timing_io)
     manifest_path = joinpath(input_directory, "manifest.txt")
     manifest = read_manifest(manifest_path)
@@ -214,6 +236,14 @@ function process_bundle(input_directory, python, plotter, timing_io)
     )
     plot_difference(
         python, plotter, manifest_path, input_directory, :tangent_quadratic,
+        map_pressure_hpa,
+    )
+    plot_comparison(
+        python,
+        plotter,
+        manifest_path,
+        input_directory,
+        joinpath(input_directory, "Tutorial_comparison_$(date_compact)_$(tag).png"),
         map_pressure_hpa,
     )
     println(timing_io, "$(manifest[\"selected_time\"]),julia,cartesian,$(cartesian_runtime)")

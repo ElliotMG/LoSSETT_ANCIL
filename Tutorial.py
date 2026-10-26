@@ -113,6 +113,12 @@ def parse_args():
     )
     parser.add_argument("--python-result", type=Path)
     parser.add_argument("--julia-result", type=Path)
+    parser.add_argument("--plot-comparison", action="store_true")
+    parser.add_argument("--comparison-output", type=Path)
+    parser.add_argument("--cartesian-python-result", type=Path)
+    parser.add_argument("--cartesian-julia-result", type=Path)
+    parser.add_argument("--tangent-python-result", type=Path)
+    parser.add_argument("--tangent-julia-result", type=Path)
     args = parser.parse_args()
     if len(args.date) not in (0, 3):
         parser.error("provide either no date or all three values: YEAR MONTH DAY")
@@ -146,6 +152,18 @@ def parse_args():
         )
     if args.plot_result is not None and args.plot_difference is not None:
         parser.error("choose either --plot-result or --plot-difference")
+    if args.plot_comparison and (
+        args.manifest is None
+        or args.comparison_output is None
+        or args.cartesian_python_result is None
+        or args.cartesian_julia_result is None
+        or args.tangent_python_result is None
+        or args.tangent_julia_result is None
+    ):
+        parser.error(
+            "--plot-comparison requires --manifest, --comparison-output, "
+            "and all four comparison result paths"
+        )
     if args.inspect_netcdf and (
         args.plot_result is not None or args.plot_difference is not None
     ):
@@ -269,6 +287,55 @@ def plot_difference(python_path, julia_path, manifest_path, geometry):
         color_limit,
         colorbar_label="Python - Julia difference (m^2 s^-3)",
     )
+
+
+def plot_comparison(
+    manifest_path,
+    cartesian_python,
+    cartesian_julia,
+    tangent_python,
+    tangent_julia,
+    output,
+):
+    import matplotlib.pyplot as plt
+
+    manifest = read_manifest(manifest_path)
+    cart_py, latitude, longitude = load_field(cartesian_python, manifest)
+    cart_jl, _, _ = load_field(cartesian_julia, manifest)
+    tan_py, _, _ = load_field(tangent_python, manifest)
+    tan_jl, _, _ = load_field(tangent_julia, manifest)
+    fields = (
+        ("Cartesian Python", cart_py),
+        ("Cartesian Julia", cart_jl),
+        ("Cartesian difference", cart_py - cart_jl),
+        ("Tangent quadratic Python", tan_py),
+        ("Tangent quadratic Julia", tan_jl),
+        ("Tangent quadratic difference", tan_py - tan_jl),
+    )
+    finite_differences = np.concatenate(
+        [fields[2][1].ravel(), fields[5][1].ravel()]
+    )
+    difference_limit = float(np.nanmax(np.abs(finite_differences)))
+    difference_limit = difference_limit if difference_limit > 0 else MAP_LIMIT
+    fig, axes = plt.subplots(2, 3, figsize=(18, 9), constrained_layout=True)
+    for axis, (label, field) in zip(axes.flat, fields):
+        limit = difference_limit if "difference" in label else MAP_LIMIT
+        image = axis.contourf(
+            longitude,
+            latitude,
+            field,
+            levels=np.linspace(-limit, limit, 21),
+            cmap="RdBu_r",
+            extend="both",
+        )
+        axis.set_title(label)
+        axis.set_xlabel("Longitude (degrees)")
+        axis.set_ylabel("Latitude (degrees)")
+        fig.colorbar(image, ax=axis, shrink=0.85)
+    fig.suptitle(f"LoSSETT comparison: {manifest['selected_time']}")
+    fig.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Saved side-by-side comparison: {output}")
 
 
 def inspect_netcdf_schema(path):
@@ -1234,6 +1301,16 @@ def main():
             args.julia_result,
             args.manifest,
             args.plot_difference,
+        )
+        return
+    if args.plot_comparison:
+        plot_comparison(
+            args.manifest,
+            args.cartesian_python_result,
+            args.cartesian_julia_result,
+            args.tangent_python_result,
+            args.tangent_julia_result,
+            args.comparison_output,
         )
         return
     MAP_PRESSURE_HPA = args.map_pressure_hpa
