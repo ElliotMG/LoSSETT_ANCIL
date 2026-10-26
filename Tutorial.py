@@ -21,6 +21,7 @@ DEFAULT_W_NETCDF_PATH = DEFAULT_INPUT_DIRECTORY / (
     "era5_vertical_velocity_200502_3h_0p5deg.nc"
 )
 LENGTH_SCALE_METRES = 500_000.0
+MEAN_MAP_LENGTH_SCALE_METRES = 250_000.0
 MAP_PRESSURE_HPA = 200.0
 MAP_LIMIT = 5e-5
 ORIGIN_LATITUDE_CHUNK = 8
@@ -119,12 +120,16 @@ def parse_args():
     parser.add_argument("--cartesian-julia-result", type=Path)
     parser.add_argument("--tangent-python-result", type=Path)
     parser.add_argument("--tangent-julia-result", type=Path)
+    parser.add_argument("--plot-time-mean", action="store_true")
+    parser.add_argument("--mean-python-result", type=Path)
+    parser.add_argument("--mean-julia-result", type=Path)
+    parser.add_argument("--mean-output", type=Path)
     args = parser.parse_args()
     if len(args.date) not in (0, 3):
         parser.error("provide either no date or all three values: YEAR MONTH DAY")
     if not args.date:
         args.date = (2005, 1, 1)
-    if args.date[0:2] != [2005, 1]:
+    if tuple(args.date[0:2]) != (2005, 1):
         parser.error("the ERA5 tutorial input must select a date in January 2005")
     if (
         args.w_netcdf == DEFAULT_W_NETCDF_PATH
@@ -163,6 +168,16 @@ def parse_args():
         parser.error(
             "--plot-comparison requires --manifest, --comparison-output, "
             "and all four comparison result paths"
+        )
+    if args.plot_time_mean and (
+        args.manifest is None
+        or args.mean_python_result is None
+        or args.mean_julia_result is None
+        or args.mean_output is None
+    ):
+        parser.error(
+            "--plot-time-mean requires --manifest, --mean-python-result, "
+            "--mean-julia-result, and --mean-output"
         )
     if args.inspect_netcdf and (
         args.plot_result is not None or args.plot_difference is not None
@@ -777,7 +792,7 @@ def write_input_bundle(dataset, output_directory, date_string, selected_time):
     )
 
 
-def run_python_calculation(dataset):
+def run_python_calculation(dataset, length_scale_metres=LENGTH_SCALE_METRES):
     from lossett.calc.calc_inter_scale_transfers import (
         calc_inter_scale_energy_transfer_kinetic,
     )
@@ -798,7 +813,7 @@ def run_python_calculation(dataset):
         result = calc_inter_scale_energy_transfer_kinetic(
             dataset,
             control,
-            length_scales=np.asarray([LENGTH_SCALE_METRES]),
+            length_scales=np.asarray([length_scale_metres]),
         )
         return result.compute()
 
@@ -810,7 +825,7 @@ def run_python_calculation(dataset):
         "length_scale", "time", "pressure", "latitude", "longitude"
     )
     field = result.sel(
-        length_scale=LENGTH_SCALE_METRES, pressure=MAP_PRESSURE_HPA
+        length_scale=length_scale_metres, pressure=MAP_PRESSURE_HPA
     ).isel(time=0)
     return np.asarray(field.values), elapsed
 
@@ -1072,6 +1087,50 @@ def save_python_result(field, elapsed, geometry, output_directory, date_string, 
     return result_path
 
 
+def plot_time_mean_comparison(python_field, julia_field, latitude, longitude, output):
+    import matplotlib.pyplot as plt
+
+    difference = python_field - julia_field
+    difference_limit = float(np.nanmax(np.abs(difference)))
+    difference_limit = difference_limit if difference_limit > 0 else MAP_LIMIT
+    fields = (
+        ("LoSSETT.py mean Dl_u (250 km)", python_field, MAP_LIMIT),
+        ("LoSSETT.jl mean Dl_u (250 km)", julia_field, MAP_LIMIT),
+        ("Python - Julia mean Dl_u", difference, difference_limit),
+    )
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
+    for axis, (label, field, limit) in zip(axes, fields):
+        image = axis.contourf(
+            longitude,
+            latitude,
+            field,
+            levels=np.linspace(-limit, limit, 21),
+            cmap="RdBu_r",
+            extend="both",
+        )
+        axis.set_title(label)
+        axis.set_xlabel("Longitude (degrees)")
+        axis.set_ylabel("Latitude (degrees)")
+        fig.colorbar(image, ax=axis, shrink=0.85)
+    fig.suptitle("January 2005 time mean of Dl_u over 50S–50N")
+    fig.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Saved January mean comparison: {output}")
+
+
+def plot_time_mean_from_files(manifest_path, python_path, julia_path, output):
+    manifest = read_manifest(manifest_path)
+    python_field, latitude, longitude = load_field(python_path, manifest)
+    julia_field, julia_latitude, julia_longitude = load_field(julia_path, manifest)
+    if not np.array_equal(latitude, julia_latitude) or not np.array_equal(
+        longitude, julia_longitude
+    ):
+        raise ValueError("Mean fields do not use identical coordinates")
+    plot_time_mean_comparison(
+        python_field, julia_field, latitude, longitude, output
+    )
+
+
 def prepare_and_run(args):
     year, month, day = args.date
     selected_date = dt.datetime(year, month, day)
@@ -1230,6 +1289,7 @@ def prepare_monthly_and_run(args):
         output_root.mkdir(parents=True, exist_ok=True)
         timing_rows = []
         tangent_helpers = require_tangent_quadratic_python_api()
+        mean_fields = []
         for position, time_value in enumerate(velocities.time.values):
             dataset = velocities.isel(time=[position])
             date_string = str(time_value.astype("datetime64[D]"))
@@ -1266,7 +1326,28 @@ def prepare_monthly_and_run(args):
                     (str(time_value), "python", "tangent_quadratic", tangent_runtime),
                 ]
             )
+            mean_field, mean_runtime = run_python_calculation(
+                dataset, MEAN_MAP_LENGTH_SCALE_METRES
+            )
+            save_result(
+                mean_field,
+                bundle_directory / "cartesian_python_250km.csv",
+            )
+            mean_fields.append(mean_field)
+            timing_rows.append(
+                (str(time_value), "python", "cartesian_250km_mean_input", mean_runtime)
+            )
             print(f"Prepared {position + 1}/{len(velocities.time)}: {time_value}")
+        python_mean = np.mean(np.stack(mean_fields, axis=0), axis=0)
+        save_result(python_mean, output_root / "Dl_u_python_january_mean_250km.csv")
+        (output_root / "Dl_u_coordinates.csv").write_text(
+            "latitude,longitude\n"
+            + "\n".join(
+                f"{lat},{lon}" for lat in velocities.latitude.values for lon in velocities.longitude.values
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         timing_path = output_root / "python_timings.csv"
         timing_path.write_text(
             "selected_time,implementation,geometry,seconds\n"
@@ -1311,6 +1392,14 @@ def main():
             args.tangent_python_result,
             args.tangent_julia_result,
             args.comparison_output,
+        )
+        return
+    if args.plot_time_mean:
+        plot_time_mean_from_files(
+            args.manifest,
+            args.mean_python_result,
+            args.mean_julia_result,
+            args.mean_output,
         )
         return
     MAP_PRESSURE_HPA = args.map_pressure_hpa

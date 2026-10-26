@@ -73,6 +73,12 @@ timestamp-specific input bundle and two Python result fields per timestamp.
 `python_timings.csv` records the measured Python core runtimes. NetCDF loading
 and plotting are outside those measurements.
 
+The same monthly run also calculates Cartesian `Dl_u` at 250 km for each
+timestamp. It writes `Dl_u_python_january_mean_250km.csv`; after the Julia
+pass, `Dl_u_julia_january_mean_250km.csv` and the three-panel figure
+`Dl_u_january_mean_250km_comparison.png` contain the January time means and
+the Python-minus-Julia difference.
+
 ## Julia execution
 
 After the Python preparation completes, run the Julia tutorial over every
@@ -82,6 +88,10 @@ prepared timestamp bundle:
 export PYTHON="$(command -v python)"
 julia --project="$HOME/LoSSETT-julia/Julia" Tutorial.jl Tutorial_monthly_200501
 ```
+
+The Julia pass recomputes the Cartesian 250 km field for every bundle before
+forming its time mean, so the final three-panel comparison is specifically
+`Dl_u` at 250 km, not the 500 km comparison output.
 
 Julia calls the package's `kinetic_energy_transfer` function for Cartesian and
 tangent-quadratic geometry. Each method is warmed up before its measured call

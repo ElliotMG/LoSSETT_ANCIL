@@ -1,7 +1,9 @@
 using LoSSETT
+using DelimitedFiles
 
 const SPHERE_RADIUS_METRES = 6_371_000.0
 const LENGTH_SCALE_METRES = 500_000.0
+const MEAN_MAP_LENGTH_SCALE_METRES = 250_000.0
 const CARTESIAN_METRES_PER_DEGREE = 110_000.0
 const CARTESIAN_MAX_RADIUS = 10.0 * CARTESIAN_METRES_PER_DEGREE
 const SPHERICAL_MAX_RADIUS = deg2rad(10.0) * SPHERE_RADIUS_METRES
@@ -46,7 +48,7 @@ function write_contour_csv(path, field)
     end
 end
 
-function calculate(u, v, w, longitude, latitude, geometry)
+function calculate(u, v, w, longitude, latitude, geometry, length_scale=LENGTH_SCALE_METRES)
     if geometry == :cartesian
         return kinetic_energy_transfer(
             u,
@@ -54,8 +56,8 @@ function calculate(u, v, w, longitude, latitude, geometry)
             w,
             longitude .* CARTESIAN_METRES_PER_DEGREE,
             latitude .* CARTESIAN_METRES_PER_DEGREE,
-            [LENGTH_SCALE_METRES];
-            max_radius=CARTESIAN_MAX_RADIUS,
+            [length_scale];
+            max_radius=10.0 * CARTESIAN_METRES_PER_DEGREE,
             periodic=(true, false),
             xdim=4,
             ydim=3,
@@ -67,7 +69,7 @@ function calculate(u, v, w, longitude, latitude, geometry)
             w,
             longitude,
             latitude,
-            [LENGTH_SCALE_METRES];
+            [length_scale];
             max_radius=SPHERICAL_MAX_RADIUS,
             geometry=:tangent_quadratic,
             sphere_radius=SPHERE_RADIUS_METRES,
@@ -86,8 +88,10 @@ end
 
 function calculate_and_save(input_directory, u, v, w,
                             longitude, latitude, pressure_index,
-                            geometry, map_pressure_hpa)
-    core_result() = calculate(u, v, w, longitude, latitude, geometry)
+                            geometry, map_pressure_hpa;
+                            length_scale=LENGTH_SCALE_METRES,
+                            filename_geometry=geometry)
+    core_result() = calculate(u, v, w, longitude, latitude, geometry, length_scale)
 
     warmup = core_result()
     warmup_sum = sum(warmup.transfer)
@@ -99,15 +103,20 @@ function calculate_and_save(input_directory, u, v, w,
     elapsed_seconds = (time_ns() - started_ns) / 1e9
 
     scale_index = findfirst(
-        scale -> isapprox(scale, LENGTH_SCALE_METRES; atol=1e-8, rtol=0),
+        scale -> isapprox(scale, length_scale; atol=1e-8, rtol=0),
         result.length_scales,
     )
     scale_index === nothing &&
-        error("Julia $geometry core did not return the requested 500 km scale")
+        error("Julia $geometry core did not return the requested scale")
     field = result.transfer[scale_index, 1, pressure_index, :, :]
 
     tag = pressure_tag(map_pressure_hpa)
-    result_path = joinpath(input_directory, "$(geometry)_julia_$(tag).csv")
+    result_path = if isapprox(length_scale, LENGTH_SCALE_METRES; atol=1e-8, rtol=0)
+        joinpath(input_directory, "$(filename_geometry)_julia_$(tag).csv")
+    else
+        scale_tag = round(Int, length_scale / 1000)
+        joinpath(input_directory, "$(filename_geometry)_julia_$(scale_tag)km.csv")
+    end
     write_contour_csv(result_path, field)
     println(
         "LoSSETT.jl $(geometry_label(geometry)) core runtime: ",
@@ -246,8 +255,16 @@ function process_bundle(input_directory, python, plotter, timing_io)
         joinpath(input_directory, "Tutorial_comparison_$(date_compact)_$(tag).png"),
         map_pressure_hpa,
     )
+    mean_path, mean_runtime = calculate_and_save(
+        input_directory, u, v, w, longitude, latitude,
+        pressure_index, :cartesian, map_pressure_hpa;
+        length_scale=MEAN_MAP_LENGTH_SCALE_METRES,
+        filename_geometry="Dl_u",
+    )
     println(timing_io, "$(manifest[\"selected_time\"]),julia,cartesian,$(cartesian_runtime)")
     println(timing_io, "$(manifest[\"selected_time\"]),julia,tangent_quadratic,$(tangent_quadratic_runtime)")
+    println(timing_io, "$(manifest[\"selected_time\"]),julia,cartesian_250km_mean_input,$(mean_runtime)")
+    return mean_path, latitude, longitude
 end
 
 function main(args)
@@ -266,11 +283,28 @@ function main(args)
     timing_path = joinpath(root, "julia_timings.csv")
     open(timing_path, "w") do timing_io
         println(timing_io, "selected_time,implementation,geometry,seconds")
+        mean_fields = Matrix{Float64}[]
+        mean_latitude = Float64[]
+        mean_longitude = Float64[]
         for (index, input_directory) in enumerate(directories)
             isfile(joinpath(input_directory, "manifest.txt")) || continue
             println("Processing Julia bundle $(index)/$(length(directories)): $input_directory")
-            process_bundle(input_directory, python, plotter, timing_io)
+            mean_path, mean_latitude, mean_longitude =
+                process_bundle(input_directory, python, plotter, timing_io)
+            push!(mean_fields, Float64.(readdlm(mean_path, ',')))
         end
+        isempty(mean_fields) && error("No Julia mean fields were produced")
+        julia_mean = reduce(+, mean_fields) ./ length(mean_fields)
+        mean_root = root
+        mean_path = joinpath(mean_root, "Dl_u_julia_january_mean_250km.csv")
+        write_contour_csv(mean_path, julia_mean)
+        python_mean = joinpath(mean_root, "Dl_u_python_january_mean_250km.csv")
+        mean_manifest = joinpath(first(directories), "manifest.txt")
+        run(Cmd([
+            python, plotter, "--plot-time-mean", "--manifest", mean_manifest,
+            "--mean-python-result", python_mean, "--mean-julia-result", mean_path,
+            "--mean-output", joinpath(mean_root, "Dl_u_january_mean_250km_comparison.png"),
+        ]))
     end
     println("Julia timings written to $timing_path")
 end
