@@ -1,4 +1,4 @@
-"""Read regular-grid NetCDF winds and compare three LoSSETT geometry methods."""
+"""Compare Cartesian and tangent-quadratic LoSSETT calculations for ERA5."""
 
 import argparse
 import datetime as dt
@@ -24,6 +24,9 @@ LENGTH_SCALE_METRES = 500_000.0
 MAP_PRESSURE_HPA = 200.0
 MAP_LIMIT = 5e-5
 ORIGIN_LATITUDE_CHUNK = 8
+LATITUDE_MIN = -50.0
+LATITUDE_MAX = 50.0
+EXPECTED_JANUARY_SAMPLES = 31 * 8
 
 
 def parse_args():
@@ -34,6 +37,11 @@ def parse_args():
         type=int,
         metavar="DATE_COMPONENT",
         help="date to select from the input NetCDF files (default: 2005 1 1)",
+    )
+    parser.add_argument(
+        "--single-timestep",
+        action="store_true",
+        help="run only the requested date instead of the full January 2005 month",
     )
     parser.add_argument(
         "--u-netcdf",
@@ -100,7 +108,7 @@ def parse_args():
     parser.add_argument("--output", type=Path, help="output image for --plot-result")
     parser.add_argument(
         "--plot-difference",
-        choices=("cartesian", "spherical", "tangent_quadratic"),
+        choices=("cartesian", "tangent_quadratic"),
         help="plot Python minus Julia fields for this geometry",
     )
     parser.add_argument("--python-result", type=Path)
@@ -522,7 +530,12 @@ def _selected_file_field(
             )
         pressure_index = None
 
-    time_index = _same_day_time_index(source[time_name], requested_date)
+    if isinstance(requested_date, (list, tuple, np.ndarray)):
+        time_indices = np.asarray(requested_date, dtype=int)
+    else:
+        time_indices = np.asarray(
+            [_same_day_time_index(source[time_name], requested_date)], dtype=int
+        )
     selected = _selected_wind_field(
         source,
         variable_name,
@@ -530,18 +543,18 @@ def _selected_file_field(
         pressure_dimension,
         latitude_dimension,
         longitude_dimension,
-        time_index,
+        time_indices,
         pressure_index,
         fixed_pressure_hpa,
     ).load()
     latitude = np.asarray(source[latitude_name].values, dtype=np.float64)
     longitude = np.asarray(source[longitude_name].values, dtype=np.float64)
-    selected_time = source[time_name].values[time_index]
+    selected_time = source[time_name].values[time_indices]
     selected = selected.assign_coords(
         latitude=latitude,
         longitude=((longitude + 180.0) % 360.0) - 180.0,
         pressure=[args.map_pressure_hpa],
-        time=[selected_time],
+        time=selected_time,
     ).sortby("latitude").sortby("longitude")
     return selected, latitude, longitude, selected_time
 
@@ -553,7 +566,7 @@ def _selected_wind_field(
     pressure_dimension,
     latitude_dimension,
     longitude_dimension,
-    time_index,
+    time_indices,
     pressure_index,
     fixed_pressure_hpa,
 ):
@@ -578,7 +591,7 @@ def _selected_wind_field(
                 f"Wind variable {variable_name!r} has no dimension "
                 f"{dimension!r}; dimensions are {variable.dims}."
             )
-    selections = {time_dimension: [time_index]}
+    selections = {time_dimension: time_indices}
     if pressure_dimension is not None and pressure_dimension in variable.dims:
         selections[pressure_dimension] = [pressure_index]
     variable = variable.isel(selections)
@@ -651,7 +664,10 @@ def prepare_netcdf_inputs(paths, requested_date, args):
             fields[role], times[role] = field, selected_time
         finally:
             source.close()
-    if not (times["u"] == times["v"] == times["w"]):
+    if not (
+        np.array_equal(times["u"], times["v"])
+        and np.array_equal(times["u"], times["w"])
+    ):
         raise ValueError("u, v, and w inputs must contain the same selected timestamp")
     latitude = np.asarray(fields["u"].latitude.values, dtype=np.float64)
     longitude = np.asarray(fields["u"].longitude.values, dtype=np.float64)
@@ -732,33 +748,6 @@ def run_python_calculation(dataset):
     return np.asarray(field.values), elapsed
 
 
-def require_spherical_python_api():
-    try:
-        from lossett.calc.field_increments import compute_du3_angular_integral_subset
-        from lossett.calc.spherical_geometry import (
-            RADIUS_EARTH,
-            build_distance_bins,
-            compute_geometry,
-        )
-        from lossett.filtering.get_integration_kernels import get_integration_kernels
-        from lossett.filtering.integration import integrate_over_scales
-    except ImportError as error:
-        raise RuntimeError(
-            "The Python spherical tutorial requires LoSSETT's "
-            "'elliotmg-fix-spherical-kernel-unpacking' branch. Install that branch in this Python "
-            "environment as described in README.md; no Cartesian fallback is used."
-        ) from error
-
-    return (
-        compute_du3_angular_integral_subset,
-        RADIUS_EARTH,
-        build_distance_bins,
-        compute_geometry,
-        get_integration_kernels,
-        integrate_over_scales,
-    )
-
-
 def require_tangent_quadratic_python_api():
     try:
         from lossett.calc.field_increments import compute_du3_angular_integral_subset
@@ -771,9 +760,8 @@ def require_tangent_quadratic_python_api():
         from lossett.filtering.integration import integrate_over_scales
     except ImportError as error:
         raise RuntimeError(
-            "The Python tangent-quadratic tutorial requires LoSSETT's "
-            "'elliotmg-fix-spherical-kernel-unpacking' branch. Install that "
-            "branch as described in README.md; no spherical fallback is used."
+            "The Python tangent-quadratic tutorial requires the LoSSETT "
+            "tangent-quadratic API. Install the matching LoSSETT branch."
         ) from error
 
     return (
@@ -786,17 +774,13 @@ def require_tangent_quadratic_python_api():
     )
 
 
-def calculate_python_spherical(dataset, helpers):
-    return _calculate_python_spherical_method(dataset, helpers, "spherical")
-
-
 def calculate_python_tangent_quadratic(dataset, helpers):
-    return _calculate_python_spherical_method(
+    return _calculate_python_tangent_quadratic_method(
         dataset, helpers, "tangent_quadratic"
     )
 
 
-def _calculate_python_spherical_method(dataset, helpers, method):
+def _calculate_python_tangent_quadratic_method(dataset, helpers, method):
     import xarray as xr
 
     (
@@ -1006,7 +990,6 @@ def save_python_result(field, elapsed, geometry, output_directory, date_string, 
     )
     geometry_labels = {
         "cartesian": "Cartesian",
-        "spherical": "Spherical",
         "tangent_quadratic": "Tangent quadratic",
     }
     plot_map(
@@ -1020,16 +1003,6 @@ def save_python_result(field, elapsed, geometry, output_directory, date_string, 
         elapsed,
     )
     return result_path
-
-
-def warmup_spherical_python_numba():
-    from lossett.calc.angular_integration import angular_integral_by_distance_bin
-
-    angular_integral_by_distance_bin(
-        np.zeros(1, dtype=np.float64),
-        np.zeros(1, dtype=np.uint8),
-        1,
-    )
 
 
 def prepare_and_run(args):
@@ -1090,8 +1063,154 @@ def prepare_and_run(args):
     )
     print(
         "Python results are ready. Run Tutorial.jl with this input directory "
-        "to create all three Julia maps and Python - Julia difference maps."
+        "to create the Cartesian and tangent-quadratic Julia maps and differences."
     )
+
+
+def prepare_monthly_and_run(args):
+    """Prepare and calculate every common January 2005 3-hourly sample."""
+    import xarray as xr
+
+    paths = {"u": args.u_netcdf, "v": args.v_netcdf, "w": args.w_netcdf}
+    definitions = (
+        ("u", args.u_variable, {"eastward_wind"}, ("u", "u_component_of_wind")),
+        ("v", args.v_variable, {"northward_wind"}, ("v", "v_component_of_wind")),
+        (
+            "w",
+            args.w_variable,
+            {"vertical_velocity", "upward_air_velocity"},
+            ("w", "vertical_velocity"),
+        ),
+    )
+    sources = {}
+    metadata = {}
+    try:
+        for role, override, standard_names, fallback_names in definitions:
+            source = _open_input_dataset(paths[role])
+            sources[role] = source
+            coordinates = _coordinate_names(source, args, paths[role])
+            time_name, latitude_name, longitude_name, pressure_name = coordinates
+            variable_name = _resolve_wind_variable(
+                source, override, standard_names, fallback_names
+            )
+            values = np.asarray(source[time_name].values).astype("datetime64[ns]")
+            if values.size < 2 or not np.all(
+                np.diff(values) == np.timedelta64(3, "h")
+            ):
+                raise ValueError(f"{role} input must have a regular 3-hourly time coordinate")
+            metadata[role] = (
+                coordinates,
+                variable_name,
+                values,
+            )
+        reference_times = metadata["u"][2]
+        for role in ("v", "w"):
+            if not np.array_equal(reference_times, metadata[role][2]):
+                raise ValueError("u, v, and w inputs must have identical time coordinates")
+        start = np.datetime64("2005-01-01", "ns")
+        stop = np.datetime64("2005-02-01", "ns")
+        indices = np.flatnonzero(
+            (reference_times >= start) & (reference_times < stop)
+        )
+        if args.single_timestep:
+            requested = np.datetime64(
+                dt.datetime(*args.date), "ns"
+            )
+            indices = np.asarray(
+                [indices[np.argmin(np.abs(reference_times[indices] - requested))]]
+            )
+        elif indices.size != EXPECTED_JANUARY_SAMPLES:
+            raise ValueError(
+                f"Expected {EXPECTED_JANUARY_SAMPLES} January samples, found {indices.size}"
+            )
+
+        fields = {}
+        for role in ("u", "v", "w"):
+            source = sources[role]
+            coordinates, variable_name, _ = metadata[role]
+            field, latitude, longitude, _ = _selected_file_field(
+                source,
+                paths[role],
+                variable_name,
+                coordinates,
+                indices,
+                args,
+            )
+            fields[role] = field
+            if role == "u":
+                reference_latitude, reference_longitude = latitude, longitude
+            elif not (
+                np.array_equal(reference_latitude, latitude)
+                and np.array_equal(reference_longitude, longitude)
+            ):
+                raise ValueError("u, v, and w inputs must use identical coordinates")
+        latitude_mask = (reference_latitude >= LATITUDE_MIN) & (
+            reference_latitude <= LATITUDE_MAX
+        )
+        if not latitude_mask.any() or not np.isclose(
+            reference_latitude[latitude_mask][[0, -1]],
+            [LATITUDE_MIN, LATITUDE_MAX],
+        ).all():
+            raise ValueError("The native grid must contain exact -50 and +50 degree latitudes")
+        velocities = xr.Dataset(fields).sel(
+            latitude=reference_latitude[latitude_mask]
+        )
+        output_root = Path(
+            "Tutorial_monthly_200501"
+            if not args.single_timestep
+            else "Tutorial_single_timestep"
+        )
+        output_root.mkdir(parents=True, exist_ok=True)
+        timing_rows = []
+        tangent_helpers = require_tangent_quadratic_python_api()
+        for position, time_value in enumerate(velocities.time.values):
+            dataset = velocities.isel(time=[position])
+            date_string = str(time_value.astype("datetime64[D]"))
+            stamp = np.datetime_as_string(time_value, unit="h").replace(
+                "-", ""
+            ).replace(":", "").replace("T", "_")
+            bundle_directory = output_root / f"Tutorial_input_{stamp}_{_pressure_tag(MAP_PRESSURE_HPA)}"
+            write_input_bundle(dataset, bundle_directory, date_string, time_value)
+            cartesian_field, cartesian_runtime = run_python_calculation(dataset)
+            save_python_result(
+                cartesian_field,
+                cartesian_runtime,
+                "cartesian",
+                bundle_directory,
+                date_string,
+                dataset,
+            )
+            started = time.perf_counter()
+            tangent_field = calculate_python_tangent_quadratic(
+                dataset, tangent_helpers
+            )
+            tangent_runtime = time.perf_counter() - started
+            save_python_result(
+                tangent_field,
+                tangent_runtime,
+                "tangent_quadratic",
+                bundle_directory,
+                date_string,
+                dataset,
+            )
+            timing_rows.extend(
+                [
+                    (str(time_value), "python", "cartesian", cartesian_runtime),
+                    (str(time_value), "python", "tangent_quadratic", tangent_runtime),
+                ]
+            )
+            print(f"Prepared {position + 1}/{len(velocities.time)}: {time_value}")
+        timing_path = output_root / "python_timings.csv"
+        timing_path.write_text(
+            "selected_time,implementation,geometry,seconds\n"
+            + "\n".join(",".join(map(str, row)) for row in timing_rows)
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"Python monthly timings written to {timing_path}")
+    finally:
+        for source in sources.values():
+            source.close()
 
 
 def main():
@@ -1118,7 +1237,10 @@ def main():
         )
         return
     MAP_PRESSURE_HPA = args.map_pressure_hpa
-    prepare_and_run(args)
+    if args.single_timestep:
+        prepare_and_run(args)
+    else:
+        prepare_monthly_and_run(args)
 
 
 if __name__ == "__main__":

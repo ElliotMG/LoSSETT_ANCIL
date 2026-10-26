@@ -1,183 +1,95 @@
-# The LoSSETT ancillaries repo
+# The LoSSETT ancillary scripts
 
-This repository contains ancillary scripts to aid in the running of LoSSETT (https://github.com/ElliotMG/LoSSETT), preprocessing and visualisation of outputs.
-
-## Repository Structure
-
-Within `src/lossett_ancil`:
-
-* `run` contains Python and Bash scripts for orchestrating the execution of LoSSETT workflows, including on test data.
-* `preprocess` contains Python scripts for pre-processing data to match the specific cases in `lossett_ancil/run`, as well as some general processing functions to e.g. perform time interpolation or embed regional models inside driving models.
-* `plot` contains various example plotting Python scripts and iPython notebooks.
-
-## Prerequisites
-Current distribution of python (Python 3) - built with `xarray` and `numpy`. See `pyproject.toml` for full list of requirements. You must have LoSSETT (https://github.com/ElliotMG/LoSSETT) installed to make use of any of the run scripts.
+This repository contains scripts for preparing data, running LoSSETT, and
+visualising results.
 
 ## Installation
 
-As a user: activate a suitable environment then pip install:
-
-```bash
-pip install  git+https://github.com/ElliotMG/LoSSETT_ANCIL.git
-```
-
-As a developer: fork then clone the repository (please create a branch before making any changes!), activate a suitable Python environment, navigate to your LoSSETT directory and
-
-```bash
-pip install -e .
-```
-
-This will install as the user installation but using the editable cloned code. Please commit code improvements and discuss merging with the master branch with Elliot McKinnon-Gray, Dan Shipley, and other users.
-
-## Python and Julia tutorial comparisons
-
-`Tutorial.py` reads separate regular lat/lon ERA5 u, v, and vertical-velocity
-NetCDF files, selects a requested January 2005 timestamp and pressure level,
-preserves the native 0.5-degree grid, and prepares a shared input bundle for
-`Tutorial.jl`. The documented JASMIN defaults are
-`/gws/ssde/j25b/kscale/USERS/dship/ERA5/3hourly/era5_u_component_of_wind_200501_3h_0p5deg.nc`,
-the corresponding v file, and
-`era5_vertical_velocity_200502_3h_0p5deg.nc` (the apparent w filename-month
-typo is intentional in the default and is validated by the file contents).
-If only the 200501 w filename exists, the script uses that alternate default;
-an explicitly supplied `--w-netcdf` path is never substituted.
-The three files must have identical coordinates and a common regular 3-hourly
-time axis. Use `--u-netcdf`, `--v-netcdf`, and `--w-netcdf` to override them.
-The default target is 200 hPa; `--map-pressure-hpa` sets another level.
-
-Coordinate and wind-variable discovery uses CF metadata, not guessed variable
-names. Run `python Tutorial.py --inspect-netcdf` to print dimensions,
-coordinates, variables, attributes, and encodings. If the file does not use
-CF standard names, pass the names shown by inspection using
-`--time-coordinate`, `--pressure-coordinate`, `--latitude-coordinate`,
-`--longitude-coordinate`, `--u-variable`, and `--v-variable`. The pressure
-coordinate must declare Pa, hPa, mbar, or millibar units. The wind variables
-must represent eastward and northward wind, respectively. For an independent
-header check, run `ncdump -h "$NETCDF"` on JASMIN.
-
-The Julia script runs Cartesian and `tangent_quadratic` methods from the
-prepared bundle, saves their maps, then creates one Python-minus-Julia
-difference map per method and prints max-absolute and RMS differences.
-Running both scripts produces six PNGs (for the default date and pressure):
-
-* `Tutorial_cartesian_python_20050101_200hPa.png`
-* `Tutorial_cartesian_julia_20050101_200hPa.png`
-* `Tutorial_cartesian_python_minus_julia_20050101_200hPa.png`
-* `Tutorial_tangent_quadratic_python_20050101_200hPa.png`
-* `Tutorial_tangent_quadratic_julia_20050101_200hPa.png`
-* `Tutorial_tangent_quadratic_python_minus_julia_20050101_200hPa.png`
-
-All four implementation fields use the same prepared native-resolution global
-grid, selected 200 hPa u/v/w input, and 500 km scale. The supplied
-0.5-degree source is processed at 0.5 degrees; no spatial coarsening or
-subsampling is performed. `Tutorial.py` requires regular, global
-latitude/longitude coordinates and rejects duplicated longitude endpoints,
-non-global or non-regular grids, and exact poles. The Python spherical and
-quadratic calculations process origin latitudes in bounded chunks and restrict
-increments to the radial-kernel support to control memory use. Native
-resolution is substantially more computationally expensive than the previous
-HEALPix-reduced tutorial grid; allow a long run and adequate JASMIN memory.
-The Python quadratic method calls
-`compute_du3_angular_integral_subset(..., method="tangent_quadratic")` and
-restricts each origin to a spherical cap containing the radial bins used by
-the kernel (bin centers through 2 length scales). It therefore produces a
-global field from local quadratic-approximation neighborhoods; it is not the
-full-sphere exact spherical calculation. The Julia method uses the same
-quadratic initial-bearing correction and a spherical cap bounded at 10 degrees,
-but uses a spherical radial Jacobian and retains the vertical increment (w is
-zero here). The cap boundaries and radial grids are therefore not identical.
-Consequently, the quadratic difference map compares the same geometry
-approximation, not numerically identical implementations; radial quadrature
-and integration conventions differ. The spherical methods also differ in
-radial integration and longitude-seam treatment.
-
-Implementation maps use the same Plate Carrée projection, domain, and fixed
-contour scale. Difference maps use a symmetric scale based on each pair's
-maximum absolute difference. The difference CLI loads both fields against the
-same manifest, rejects mismatched shapes/coordinates, and reports the number
-of finite difference cells as well as max-absolute and RMS values in
-`m^2 s^-3`. Python writes the implementation fields to
-`Tutorial_input_YYYYMMDD_200hPa/{cartesian,spherical,tangent_quadratic}_python_200hPa.csv`;
-Julia writes the corresponding `*_julia_200hPa.csv` files in that directory.
-The manifest records the selected pressure; each implementation's runtime
-and pressure are included in its map title.
-
-### Python environment and run
-
-Install the ancillary project first, then replace its default LoSSETT install
-with the LoSSETT branch containing the spherical Python helpers and kernel
-unpacking fixes. This branch is based on `spherical_geometry` and includes the
-subset `tangent_quadratic` API. It uses Numba and NumExpr, which are not
-declared by the LoSSETT project metadata:
+Install the ancillary package and the LoSSETT implementation in the same
+environment:
 
 ```bash
 python -m pip install -e .
-python -m pip install netCDF4
-git clone --branch elliotmg-fix-spherical-kernel-unpacking https://github.com/ElliotMG/LoSSETT.git "${TMPDIR:-/tmp}/LoSSETT-spherical"
-git -C "${TMPDIR:-/tmp}/LoSSETT-spherical" branch --show-current
-python -m pip install -e "${TMPDIR:-/tmp}/LoSSETT-spherical"
-python -m pip install numba numexpr
-python -c "from lossett.calc.spherical_geometry import compute_geometry; from lossett.calc.field_increments import compute_du3_angular_integral_subset; print('LoSSETT spherical and tangent-quadratic APIs are available')"
-export NETCDF=/gws/ssde/j25b/kscale/DATA/ENSEMBLE/outdir_20050101T0000Z/rosie_ens_kscale_ctc/engl_em00/profile_200/20050101_20050101T0000Z_global_profile_3hourly_200_05deg.nc
-ncdump -h "$NETCDF"
-python Tutorial.py --inspect-netcdf --u-netcdf "$NETCDF"
-python Tutorial.py 2005 01 01 --map-pressure-hpa 200
+python -m pip install -e /path/to/LoSSETT
 ```
 
-If CF metadata cannot identify a coordinate or wind field, rerun with the
-corresponding explicit names printed by `--inspect-netcdf`. If the file lacks
-a pressure coordinate and is not stored under a `profile_NNN` directory,
-supply `--input-pressure-hpa` to state the fixed level explicitly.
-
-Both spherical maps call the `elliotmg-fix-spherical-kernel-unpacking`
-branch's `compute_geometry`, `compute_du3_angular_integral_subset`,
-`get_integration_kernels`, and `integrate_over_scales` implementations
-directly, using the corresponding `spherical` or `tangent_quadratic` method
-and per-origin cap-restricted active indices. Geometry is prepared in-memory
-in bounded origin-latitude chunks at the source grid resolution. Missing
-branch helpers are an error; the script does not substitute a Cartesian
-calculation. The spherical and
-tangent-quadratic Python methods use spherical mollifier normalization but
-`r dr` transfer integration (not `R sin(r/R) dr`), uniform angular sample
-weighting, and horizontal increments only. The separate Cartesian Python
-method continues to use the existing Cartesian core.
-
-### Julia environment and run
-
-The Julia quadratic API is on the published `elliotmg-add-quadratic-julia-geometry`
-branch at commit `5578c463ab9863aff6b07abdb4ffdaeed6fead41`, based on the
-Julia package-precompile fix. The API rejects grids containing either pole;
-the source coordinate must therefore exclude exact ±90-degree latitude values.
-Both calculation paths reject any input grid that still contains a pole.
-The branch and API have not yet been independently runtime-verified with this
-tutorial, so treat this install reference as provisional until that
-verification is complete. The standalone Julia package's `Project.toml` lives
-in the `Julia` subdirectory:
+The Julia implementation is provided by the `LoSSETT` repository's
+`elliotmg-add-quadratic-julia-geometry` branch:
 
 ```bash
-git clone --branch elliotmg-add-quadratic-julia-geometry https://github.com/ElliotMG/LoSSETT.git "${TMPDIR:-/tmp}/LoSSETT-julia"
-git -C "${TMPDIR:-/tmp}/LoSSETT-julia" checkout 5578c463ab9863aff6b07abdb4ffdaeed6fead41
-julia --project="${TMPDIR:-/tmp}/LoSSETT-julia/Julia" -e 'using Pkg; Pkg.instantiate()'
-git -C "${TMPDIR:-/tmp}/LoSSETT-julia" rev-parse HEAD
-julia --project="${TMPDIR:-/tmp}/LoSSETT-julia/Julia" Tutorial.jl Tutorial_input_20050101_200hPa
+git clone --branch elliotmg-add-quadratic-julia-geometry \
+  https://github.com/ElliotMG/LoSSETT.git "$HOME/LoSSETT-julia"
+julia --project="$HOME/LoSSETT-julia/Julia" -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Confirm that the `rev-parse` output is
-`5578c463ab9863aff6b07abdb4ffdaeed6fead41` before running the Julia tutorial.
+## ERA5 January 2005 comparison
 
-Set `PYTHON` to the Python executable in the prepared plotting environment if
-the `python` command is not available to Julia. For another date, run
-`Tutorial.py` with that date and pass its matching input directory to
-`Tutorial.jl`.
+`Tutorial.py` reads separate regular-grid ERA5 u, v, and vertical-velocity
+NetCDF files from:
 
-The runtime in each implementation title covers the core call and materialized
-result, not NetCDF I/O, or plotting. Julia performs an
-untimed full-case warm-up to exclude compilation; the Python Numba
-angular-integration kernel is separately warmed before timing. Comparisons are
-not expected to have zero differences: Cartesian implementations use different
-discrete radial/angular quadratures; Python uses `r dr` while Julia uses the
-spherical radial Jacobian; and Julia's full-spherical core does not wrap across
-the longitude seam whereas the Python global workflow rolls fields
-periodically. The tangent-quadratic methods share the initial-bearing
-correction but differ in radial sampling/integration, and Julia also retains
-the (zero-valued) vertical component.
+```text
+/gws/ssde/j25b/kscale/USERS/dship/ERA5/3hourly
+```
+
+The default files are `era5_u_component_of_wind_200501_3h_0p5deg.nc`,
+`era5_v_component_of_wind_200501_3h_0p5deg.nc`, and
+`era5_vertical_velocity_200502_3h_0p5deg.nc`. If the latter is instead named
+with `200501`, the script uses that file when the default is absent. The
+inputs must have identical regular 3-hourly coordinates.
+
+The monthly workflow processes all 248 January 2005 timestamps, keeps the
+native 0.5-degree grid, and selects latitudes exactly from 50°S through 50°N.
+It compares only:
+
+* Cartesian LoSSETT;
+* the tangent-quadratic local spherical-cap approximation.
+
+It does not run the unfinished full-spherical method.
+
+Inspect the input schema first:
+
+```bash
+python Tutorial.py --inspect-netcdf
+```
+
+Run the complete month:
+
+```bash
+python Tutorial.py
+```
+
+For a one-timestep smoke test:
+
+```bash
+python Tutorial.py --single-timestep 2005 1 1
+```
+
+Use `--u-netcdf`, `--v-netcdf`, `--w-netcdf`, `--map-pressure-hpa`, and the
+coordinate/variable override options when the files do not expose standard CF
+metadata. The default pressure is 200 hPa.
+
+Monthly outputs are written below `Tutorial_monthly_200501/`, with one
+timestamp-specific input bundle and two Python result fields per timestamp.
+`python_timings.csv` records the measured Python core runtimes. NetCDF loading
+and plotting are outside those measurements.
+
+## Julia execution
+
+After the Python preparation completes, run the Julia tutorial over every
+prepared timestamp bundle:
+
+```bash
+export PYTHON="$(command -v python)"
+julia --project="$HOME/LoSSETT-julia/Julia" Tutorial.jl Tutorial_monthly_200501
+```
+
+Julia calls the package's `kinetic_energy_transfer` function for Cartesian and
+tangent-quadratic geometry. Each method is warmed up before its measured call
+so first-use compilation is excluded from the reported runtime.
+
+For every timestamp, the workflow writes Cartesian and tangent-quadratic
+Python/Julia fields, side-by-side comparison figures, and difference fields.
+The timing files distinguish Python from Julia and Cartesian from
+tangent-quadratic calculations. The comparison is between package calls; the
+tutorial scripts only handle NetCDF selection, bundle creation, plotting, and
+timing.

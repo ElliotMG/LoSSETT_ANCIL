@@ -152,11 +152,7 @@ function plot_difference(python, plotter, manifest_path, input_directory,
     ]))
 end
 
-function main(args)
-    length(args) <= 1 ||
-        error("Usage: julia Tutorial.jl [input-directory] (default pressure: 200 hPa)")
-    default_directory = "Tutorial_input_20050101_$(pressure_tag(DEFAULT_MAP_PRESSURE_HPA))"
-    input_directory = abspath(isempty(args) ? default_directory : args[1])
+function process_bundle(input_directory, python, plotter, timing_io)
     manifest_path = joinpath(input_directory, "manifest.txt")
     manifest = read_manifest(manifest_path)
     shape = Tuple(parse.(Int, split(manifest["shape"], ',')))
@@ -204,13 +200,13 @@ function main(args)
     plot_python_result(
         python, plotter, cartesian_path, manifest_path,
         "LoSSETT.jl Cartesian ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
-        joinpath(pwd(), "Tutorial_cartesian_julia_$(date_compact)_$(tag).png"),
+        joinpath(input_directory, "Tutorial_cartesian_julia_$(date_compact)_$(tag).png"),
         cartesian_runtime,
     )
     plot_python_result(
         python, plotter, tangent_quadratic_path, manifest_path,
         "LoSSETT.jl Tangent quadratic ($(pressure_text(map_pressure_hpa)) hPa, 500 km)",
-        joinpath(pwd(), "Tutorial_tangent_quadratic_julia_$(date_compact)_$(tag).png"),
+        joinpath(input_directory, "Tutorial_tangent_quadratic_julia_$(date_compact)_$(tag).png"),
         tangent_quadratic_runtime,
     )
     plot_difference(
@@ -220,6 +216,33 @@ function main(args)
         python, plotter, manifest_path, input_directory, :tangent_quadratic,
         map_pressure_hpa,
     )
+    println(timing_io, "$(manifest[\"selected_time\"]),julia,cartesian,$(cartesian_runtime)")
+    println(timing_io, "$(manifest[\"selected_time\"]),julia,tangent_quadratic,$(tangent_quadratic_runtime)")
+end
+
+function main(args)
+    length(args) <= 1 ||
+        error("Usage: julia Tutorial.jl [monthly-output-directory]")
+    default_directory = "Tutorial_input_20050101_$(pressure_tag(DEFAULT_MAP_PRESSURE_HPA))"
+    root = abspath(isempty(args) ? default_directory : args[1])
+    directories = if isfile(joinpath(root, "manifest.txt"))
+        [root]
+    else
+        sort(filter(isdir, readdir(root; join=true)))
+    end
+    isempty(directories) && error("No tutorial input bundles found in $root")
+    python = get(ENV, "PYTHON", "python")
+    plotter = joinpath(@__DIR__, "Tutorial.py")
+    timing_path = joinpath(root, "julia_timings.csv")
+    open(timing_path, "w") do timing_io
+        println(timing_io, "selected_time,implementation,geometry,seconds")
+        for (index, input_directory) in enumerate(directories)
+            isfile(joinpath(input_directory, "manifest.txt")) || continue
+            println("Processing Julia bundle $(index)/$(length(directories)): $input_directory")
+            process_bundle(input_directory, python, plotter, timing_io)
+        end
+    end
+    println("Julia timings written to $timing_path")
 end
 
 main(ARGS)
