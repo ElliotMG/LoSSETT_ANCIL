@@ -361,27 +361,34 @@ def _normalise_ensemble_dataset(ds):
     return ds.rename(rename_map)
 
 
-def _ensemble_data_roots(ensemble_root):
-    """Resolve an ENSEMBLE, outdir, or rosie_ens_kscale_ctc root."""
+def _ensemble_data_roots(ensemble_root, ensemble="engl"):
+    """Resolve an ENSEMBLE, outdir, or named ensemble data root."""
     root = Path(ensemble_root)
-    if root.name == "rosie_ens_kscale_ctc":
+    ensemble_root_name = f"rosie_ens_kscale_{ensemble}"
+    if root.name in (ensemble_root_name, "rosie_ens_kscale_ctc"):
         return [root]
     if root.name.startswith("outdir_"):
-        return [root / "rosie_ens_kscale_ctc"]
+        named_root = root / ensemble_root_name
+        legacy_root = root / "rosie_ens_kscale_ctc"
+        return [path for path in (named_root, legacy_root) if path.is_dir()]
     return sorted(
+        path
+        for path in root.glob(f"outdir_*/{ensemble_root_name}")
+        if path.is_dir()
+    ) or sorted(
         path
         for path in root.glob("outdir_*/rosie_ens_kscale_ctc")
         if path.is_dir()
     )
 
 
-def _ensemble_members(ensemble_root):
+def _ensemble_members(ensemble_root, ensemble="engl"):
     """Discover ensemble members below any supported ensemble root."""
-    roots = _ensemble_data_roots(ensemble_root)
+    roots = _ensemble_data_roots(ensemble_root, ensemble=ensemble)
     members = {
         member_dir.name
         for data_root in roots
-        for member_dir in data_root.glob("engl_em*")
+        for member_dir in data_root.glob(f"{ensemble}_em*")
         if member_dir.is_dir()
     }
     return sorted(members)
@@ -395,7 +402,8 @@ def _ensemble_date(path):
 def preprocess_ensemble(
     ensemble_root,
     member,
-    level=200,
+    level,
+    ensemble="engl",
     start_time=None,
     end_time=None,
     chunks=None,
@@ -406,7 +414,7 @@ def preprocess_ensemble(
     and ``longitude`` and contains only the ``u``, ``v``, and ``w`` fields.
     """
     level = int(level)
-    data_roots = _ensemble_data_roots(ensemble_root)
+    data_roots = _ensemble_data_roots(ensemble_root, ensemble=ensemble)
     pattern = f"{member}/profile_{level}/*_profile_3hourly_{level}_05deg.nc"
     files = sorted(
         path

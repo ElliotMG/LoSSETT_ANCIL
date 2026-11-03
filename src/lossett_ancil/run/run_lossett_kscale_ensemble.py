@@ -18,7 +18,8 @@ from lossett_ancil.preprocess.preprocess_kscale import (
 
 def _parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-root", required=True, type=Path)
+    parser.add_argument("input_root", nargs="?", type=Path)
+    parser.add_argument("--input-root", dest="input_root_option", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument(
         "--max-scale",
@@ -27,28 +28,39 @@ def _parser():
         required=True,
         type=float,
     )
-    parser.add_argument("--level", type=int, default=200)
-    parser.add_argument("--members", nargs="+")
+    parser.add_argument("--level", required=True, type=int)
+    parser.add_argument(
+        "--ensemble",
+        choices=("engl", "CTC_N2560_GAL9", "CTC_N2560_RAL3p2"),
+        default="engl",
+    )
+    parser.add_argument("--member", dest="members", action="append")
+    parser.add_argument("--members", dest="members", nargs="+")
     parser.add_argument("--start-time")
     parser.add_argument("--end-time")
     parser.add_argument("--overwrite", action="store_true")
     return parser
 
 
-def _output_path(output_dir, member, level, max_scale):
+def _output_path(output_dir, ensemble, member, level, max_scale):
     scale = f"{max_scale:g}".replace(".", "p")
     return output_dir / (
-        f"{member}_profile_{level}_ensemble_inter_scale_transfer_"
+        f"{ensemble}_{member}_profile_{level}_ensemble_inter_scale_transfer_"
         f"Lmax_{scale}.nc"
     )
 
 
 def main(argv=None):
     args = _parser().parse_args(argv)
+    input_root = args.input_root_option or args.input_root
+    if input_root is None:
+        _parser().error("an input root is required")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    members = args.members or _ensemble_members(args.input_root)
+    members = args.members or _ensemble_members(
+        input_root, ensemble=args.ensemble
+    )
     if not members:
-        logging.error("No ensemble members found under %s", args.input_root)
+        logging.error("No ensemble members found under %s", input_root)
         return 1
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -66,16 +78,17 @@ def main(argv=None):
     failures = []
     for member in members:
         output_path = _output_path(
-            args.output_dir, member, args.level, args.max_scale
+            args.output_dir, args.ensemble, member, args.level, args.max_scale
         )
         if output_path.exists() and not args.overwrite:
             logging.info("Skipping existing output for %s: %s", member, output_path)
             continue
         try:
             ds = preprocess_ensemble(
-                args.input_root,
+                input_root,
                 member,
                 level=args.level,
+                ensemble=args.ensemble,
                 start_time=args.start_time,
                 end_time=args.end_time,
             )
