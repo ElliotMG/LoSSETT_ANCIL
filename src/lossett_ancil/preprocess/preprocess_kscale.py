@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import re
 from pathlib import Path
 import numpy as np
 import xarray as xr
@@ -343,6 +344,126 @@ def load_kscale_0p5deg(period, datetime, driving_model, nested_model=None, plevs
         ds_u_3D = ds_u_3D.isel(latitude=slice(1,-1))
     
         return ds_u_3D;
+
+
+def _normalise_ensemble_dataset(ds):
+    """Normalise ensemble variable and coordinate names for LoSSETT."""
+    rename_map = {}
+    for source, target in (
+        ("x_wind", "u"),
+        ("y_wind", "v"),
+        ("upward_air_velocity", "w"),
+        ("lat", "latitude"),
+        ("lon", "longitude"),
+    ):
+        if source in ds and target not in ds:
+            rename_map[source] = target
+    return ds.rename(rename_map)
+
+
+def _ensemble_data_roots(ensemble_root):
+    """Resolve an ENSEMBLE, outdir, or rosie_ens_kscale_ctc root."""
+    root = Path(ensemble_root)
+    if root.name == "rosie_ens_kscale_ctc":
+        return [root]
+    if root.name.startswith("outdir_"):
+        return [root / "rosie_ens_kscale_ctc"]
+    return sorted(
+        path
+        for path in root.glob("outdir_*/rosie_ens_kscale_ctc")
+        if path.is_dir()
+    )
+
+
+def _ensemble_members(ensemble_root):
+    """Discover ensemble members below any supported ensemble root."""
+    roots = _ensemble_data_roots(ensemble_root)
+    members = {
+        member_dir.name
+        for data_root in roots
+        for member_dir in data_root.glob("engl_em*")
+        if member_dir.is_dir()
+    }
+    return sorted(members)
+
+
+def _ensemble_date(path):
+    match = re.match(r"(\d{8})_", path.name)
+    return match.group(1) if match else ""
+
+
+def preprocess_ensemble(
+    ensemble_root,
+    member,
+    level=200,
+    start_time=None,
+    end_time=None,
+    chunks=None,
+):
+    """Lazily load one pressure level for one K-scale ensemble member.
+
+    The returned dataset has dimensions ``time``, ``pressure``, ``latitude``,
+    and ``longitude`` and contains only the ``u``, ``v``, and ``w`` fields.
+    """
+    level = int(level)
+    data_roots = _ensemble_data_roots(ensemble_root)
+    pattern = f"{member}/profile_{level}/*_profile_3hourly_{level}_05deg.nc"
+    files = sorted(
+        path
+        for data_root in data_roots
+        for path in data_root.glob(pattern)
+        if _ensemble_date(path)
+    )
+    if start_time is not None:
+        first_date = pd.Timestamp(start_time).strftime("%Y%m%d")
+        files = [path for path in files if _ensemble_date(path) >= first_date]
+    if end_time is not None:
+        last_date = pd.Timestamp(end_time).strftime("%Y%m%d")
+        files = [path for path in files if _ensemble_date(path) <= last_date]
+    if not files:
+        raise FileNotFoundError(
+            f"No files found for member {member!r}, level {level} under "
+            f"{ensemble_root}"
+        )
+
+    open_chunks = chunks or {"time": 8, "latitude": 256, "longitude": 256}
+    daily = []
+    for path in files:
+        ds = xr.open_dataset(
+            path,
+            chunks=open_chunks,
+            drop_variables=["forecast_reference_time", "forecast_period"],
+            mask_and_scale=True,
+        )
+        ds = _normalise_ensemble_dataset(ds)
+        missing = [name for name in ("u", "v", "w") if name not in ds.data_vars]
+        if missing:
+            raise KeyError(f"{path} is missing required variables: {missing}")
+        ds = ds[["u", "v", "w"]]
+        if "pressure" in ds.dims:
+            ds = ds.isel(pressure=0, drop=True)
+        elif "pressure" in ds.coords:
+            ds = ds.drop_vars("pressure")
+        daily.append(ds)
+
+    ds = xr.concat(
+        daily,
+        dim="time",
+        data_vars="minimal",
+        coords="minimal",
+        compat="override",
+        combine_attrs="override",
+    ).sortby("time")
+    _, unique_indices = np.unique(ds.time.values, return_index=True)
+    if len(unique_indices) != ds.sizes["time"]:
+        ds = ds.isel(time=np.sort(unique_indices))
+    if start_time is not None or end_time is not None:
+        ds = ds.sel(time=slice(start_time, end_time))
+    ds = ds.expand_dims(pressure=np.asarray([level], dtype=np.float32))
+    ds = check_longitude(ds, out="180")
+    if ds.sizes.get("latitude", 0) > 2:
+        ds = ds.isel(latitude=slice(1, -1))
+    return ds.transpose("time", "pressure", "latitude", "longitude")
 
 def load_kscale_native(
         period,
