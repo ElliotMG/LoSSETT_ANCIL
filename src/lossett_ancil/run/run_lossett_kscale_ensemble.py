@@ -2,6 +2,7 @@
 """Run LoSSETT kinetic transfer calculations for K-scale ensemble members."""
 
 import argparse
+import datetime as dt
 import logging
 from pathlib import Path
 
@@ -32,17 +33,36 @@ def _parser():
         default="engl",
     )
     parser.add_argument("--member", required=True)
+    parser.add_argument(
+        "--day-index",
+        type=int,
+        help="Zero-based day offset from --first-date to process.",
+    )
+    parser.add_argument(
+        "--first-date",
+        default="2016-08-01",
+        help="First date used with --day-index (default: 2016-08-01).",
+    )
     parser.add_argument("--start-time")
     parser.add_argument("--end-time")
     parser.add_argument("--overwrite", action="store_true")
     return parser
 
 
-def _output_path(output_dir, ensemble, member, level, max_scale):
+def _output_path(
+    output_dir, ensemble, member, level, max_scale, start_time=None, end_time=None
+):
     scale = f"{max_scale:g}".replace(".", "p")
+    date_suffix = ""
+    if start_time is not None:
+        start_date = start_time[:10].replace("-", "")
+        end_date = (end_time or start_time)[:10].replace("-", "")
+        date_suffix = f"_{start_date}" if start_date == end_date else (
+            f"_{start_date}_{end_date}"
+        )
     return output_dir / (
         f"{ensemble}_{member}_profile_{level}_ensemble_inter_scale_transfer_"
-        f"Lmax_{scale}.nc"
+        f"Lmax_{scale}{date_suffix}.nc"
     )
 
 
@@ -51,6 +71,21 @@ def main(argv=None):
     input_root = args.input_root_option or args.input_root
     if input_root is None:
         _parser().error("an input root is required")
+    if args.day_index is not None:
+        if args.day_index < 0:
+            _parser().error("--day-index must be non-negative")
+        if args.start_time is not None or args.end_time is not None:
+            _parser().error(
+                "--day-index cannot be combined with --start-time or --end-time"
+            )
+        try:
+            day = dt.date.fromisoformat(args.first_date) + dt.timedelta(
+                days=args.day_index
+            )
+        except ValueError as exc:
+            _parser().error(f"--first-date must be YYYY-MM-DD: {exc}")
+        args.start_time = day.isoformat()
+        args.end_time = day.isoformat()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     control_dict = {
@@ -65,7 +100,13 @@ def main(argv=None):
         "y_coord_boundary": np.nan,
     }
     output_path = _output_path(
-        args.output_dir, args.ensemble, args.member, args.level, args.max_scale
+        args.output_dir,
+        args.ensemble,
+        args.member,
+        args.level,
+        args.max_scale,
+        args.start_time,
+        args.end_time,
     )
     if output_path.exists() and not args.overwrite:
         logging.info("Skipping existing output for %s", args.member)
