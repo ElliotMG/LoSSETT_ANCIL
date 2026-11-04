@@ -394,6 +394,12 @@ def _ensemble_members(ensemble_root, ensemble="engl"):
     return sorted(members)
 
 
+def _ensemble_member_name(member, ensemble):
+    """Return the on-disk member directory name for a model and member ID."""
+    prefix = f"{ensemble}_"
+    return member if member.startswith(prefix) else f"{prefix}{member}"
+
+
 def _ensemble_date(path):
     match = re.match(r"(\d{8})_", path.name)
     return match.group(1) if match else ""
@@ -415,7 +421,11 @@ def preprocess_ensemble(
     """
     level = int(level)
     data_roots = _ensemble_data_roots(ensemble_root, ensemble=ensemble)
-    pattern = f"{member}/profile_{level}/*_profile_3hourly_{level}_05deg.nc"
+    member_name = _ensemble_member_name(member, ensemble)
+    pattern = (
+        f"{member_name}/profile_{level}/"
+        f"*_profile_3hourly_{level}_05deg.nc"
+    )
     files = sorted(
         path
         for data_root in data_roots

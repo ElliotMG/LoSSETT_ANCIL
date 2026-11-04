@@ -122,9 +122,14 @@ def main(argv=None):
         result = calc_inter_scale_energy_transfer_kinetic(ds, control_dict)
         l_min = result.length_scale[0].values / 1000
         l_max = result.length_scale[-1].values / 1000
+        member_name = (
+            args.member
+            if args.member.startswith(f"{args.ensemble}_")
+            else f"{args.ensemble}_{args.member}"
+        )
         output_path = _output_path(
             args.output_dir,
-            args.member,
+            member_name,
             args.level,
             l_min,
             l_max,
