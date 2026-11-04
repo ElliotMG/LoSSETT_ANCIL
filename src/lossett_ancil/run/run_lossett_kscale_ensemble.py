@@ -51,7 +51,6 @@ def _parser():
 
 def _output_path(
     output_dir,
-    ensemble,
     member,
     level,
     l_min,
@@ -69,7 +68,7 @@ def _output_path(
             f"_{start_date}_{end_date}"
         )
     return output_dir / (
-        f"{ensemble}_{member}_profile_{level}_ensemble_inter_scale_transfer_"
+        f"{member}_profile_{level}_ensemble_inter_scale_transfer_"
         f"Lmin_{l_min:05.0f}_Lmax_{l_max:05.0f}{date_suffix}.nc"
     )
 
@@ -125,7 +124,6 @@ def main(argv=None):
         l_max = result.length_scale[-1].values / 1000
         output_path = _output_path(
             args.output_dir,
-            args.ensemble,
             args.member,
             args.level,
             l_min,
