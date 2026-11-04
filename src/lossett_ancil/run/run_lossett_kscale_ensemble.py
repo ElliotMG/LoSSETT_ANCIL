@@ -59,6 +59,8 @@ def _output_path(
     start_time=None,
     end_time=None,
 ):
+    # LoSSETT reports length scales in metres; filenames use kilometres to
+    # match the naming convention of the existing runners.
     date_suffix = ""
     if start_time is not None:
         start_date = start_time[:10].replace("-", "")
@@ -78,6 +80,8 @@ def main(argv=None):
     if input_root is None:
         _parser().error("an input root is required")
     if args.day_index is not None:
+        # Convert the Slurm array index into one calendar day. The runner
+        # deliberately handles one member and one day per process.
         if args.day_index < 0:
             _parser().error("--day-index must be non-negative")
         if args.start_time is not None or args.end_time is not None:
@@ -114,6 +118,8 @@ def main(argv=None):
             start_time=args.start_time,
             end_time=args.end_time,
         )
+        # Calculate before naming the file because the actual Lmax depends on
+        # the scale grid returned by LoSSETT, not directly on --max-scale-deg.
         result = calc_inter_scale_energy_transfer_kinetic(ds, control_dict)
         l_min = result.length_scale[0].values / 1000
         l_max = result.length_scale[-1].values / 1000

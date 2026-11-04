@@ -434,6 +434,8 @@ def preprocess_ensemble(
             f"{ensemble_root}"
         )
 
+    # Keep file reads lazy and bound each task's working set. The caller can
+    # override these chunks when running on a different resource allocation.
     open_chunks = chunks or {"time": 8, "latitude": 256, "longitude": 256}
     daily = []
     for path in files:
@@ -454,6 +456,8 @@ def preprocess_ensemble(
             ds = ds.drop_vars("pressure")
         daily.append(ds)
 
+    # Daily files may overlap at boundaries, so sort and remove duplicate
+    # timestamps before applying the final time selection.
     ds = xr.concat(
         daily,
         dim="time",
