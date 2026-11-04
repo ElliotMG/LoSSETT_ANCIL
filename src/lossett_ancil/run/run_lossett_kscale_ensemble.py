@@ -50,9 +50,15 @@ def _parser():
 
 
 def _output_path(
-    output_dir, ensemble, member, level, max_scale, start_time=None, end_time=None
+    output_dir,
+    ensemble,
+    member,
+    level,
+    l_min,
+    l_max,
+    start_time=None,
+    end_time=None,
 ):
-    scale = f"{max_scale:g}".replace(".", "p")
     date_suffix = ""
     if start_time is not None:
         start_date = start_time[:10].replace("-", "")
@@ -62,7 +68,7 @@ def _output_path(
         )
     return output_dir / (
         f"{ensemble}_{member}_profile_{level}_ensemble_inter_scale_transfer_"
-        f"Lmax_{scale}{date_suffix}.nc"
+        f"Lmin_{l_min:05.0f}_Lmax_{l_max:05.0f}{date_suffix}.nc"
     )
 
 
@@ -99,18 +105,6 @@ def main(argv=None):
         "y_coord_units": "deg",
         "y_coord_boundary": np.nan,
     }
-    output_path = _output_path(
-        args.output_dir,
-        args.ensemble,
-        args.member,
-        args.level,
-        args.max_scale,
-        args.start_time,
-        args.end_time,
-    )
-    if output_path.exists() and not args.overwrite:
-        logging.info("Skipping existing output for %s", args.member)
-        return 0
     try:
         ds = preprocess_ensemble(
             input_root,
@@ -121,6 +115,21 @@ def main(argv=None):
             end_time=args.end_time,
         )
         result = calc_inter_scale_energy_transfer_kinetic(ds, control_dict)
+        l_min = result.length_scale[0].values / 1000
+        l_max = result.length_scale[-1].values / 1000
+        output_path = _output_path(
+            args.output_dir,
+            args.ensemble,
+            args.member,
+            args.level,
+            l_min,
+            l_max,
+            args.start_time,
+            args.end_time,
+        )
+        if output_path.exists() and not args.overwrite:
+            logging.info("Skipping existing output for %s", args.member)
+            return 0
         result.to_netcdf(output_path)
         logging.info("Wrote %s", output_path)
     except Exception:
