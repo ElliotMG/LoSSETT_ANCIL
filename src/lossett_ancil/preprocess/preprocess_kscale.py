@@ -400,6 +400,23 @@ def _ensemble_member_name(member, ensemble):
     return member if member.startswith(prefix) else f"{prefix}{member}"
 
 
+def _ensemble_member_dirs(data_roots, member, ensemble):
+    """Find model member directories while accepting short member IDs."""
+    member_name = _ensemble_member_name(member, ensemble)
+    paths = []
+    for data_root in data_roots:
+        exact = data_root / member_name
+        if exact.is_dir():
+            paths.append(exact)
+            continue
+        paths.extend(
+            path
+            for path in data_root.glob(f"*_{member}")
+            if path.is_dir()
+        )
+    return sorted(set(paths))
+
+
 def _ensemble_date(path):
     match = re.match(r"(\d{8})_", path.name)
     return match.group(1) if match else ""
@@ -421,15 +438,12 @@ def preprocess_ensemble(
     """
     level = int(level)
     data_roots = _ensemble_data_roots(ensemble_root, ensemble=ensemble)
-    member_name = _ensemble_member_name(member, ensemble)
-    pattern = (
-        f"{member_name}/profile_{level}/"
-        f"*_profile_3hourly_{level}_05deg.nc"
-    )
     files = sorted(
         path
-        for data_root in data_roots
-        for path in data_root.glob(pattern)
+        for member_dir in _ensemble_member_dirs(data_roots, member, ensemble)
+        for path in member_dir.glob(
+            f"profile_{level}/*_profile_3hourly_{level}_05deg.nc"
+        )
         if _ensemble_date(path)
     )
     if start_time is not None:
