@@ -94,7 +94,9 @@ def main(argv=None):
         except ValueError as exc:
             _parser().error(f"--first-date must be YYYY-MM-DD: {exc}")
         args.start_time = day.isoformat()
-        args.end_time = day.isoformat()
+        args.end_time = (
+            (day + dt.timedelta(days=1)).isoformat() + "T00:00:00"
+        )
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     control_dict = {
@@ -116,6 +118,7 @@ def main(argv=None):
             ensemble=args.ensemble,
             start_time=args.start_time,
             end_time=args.end_time,
+            end_time_exclusive=args.day_index is not None,
         )
         # Calculate before naming the file because the actual Lmax depends on
         # the scale grid returned by LoSSETT, not directly on --max-scale-deg.

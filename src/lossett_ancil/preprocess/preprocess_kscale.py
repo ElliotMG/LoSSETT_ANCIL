@@ -422,6 +422,30 @@ def _ensemble_date(path):
     return match.group(1) if match else ""
 
 
+def _select_ensemble_times(
+    ds, start_time=None, end_time=None, end_time_exclusive=False
+):
+    """Select an ensemble time range without dropping midnight boundaries."""
+    if start_time is None and end_time is None:
+        return ds
+
+    time_values = pd.DatetimeIndex(ds.time.values)
+    keep = np.ones(len(time_values), dtype=bool)
+    if start_time is not None:
+        keep &= time_values >= pd.Timestamp(start_time)
+    if end_time is not None:
+        end_timestamp = pd.Timestamp(end_time)
+        if len(str(end_time)) == 10 and not end_time_exclusive:
+            end_timestamp += pd.Timedelta(days=1)
+        if end_time_exclusive:
+            keep &= time_values < end_timestamp
+        elif len(str(end_time)) == 10:
+            keep &= time_values < end_timestamp
+        else:
+            keep &= time_values <= end_timestamp
+    return ds.isel(time=np.flatnonzero(keep))
+
+
 def preprocess_ensemble(
     ensemble_root,
     member,
@@ -429,6 +453,7 @@ def preprocess_ensemble(
     ensemble="engl",
     start_time=None,
     end_time=None,
+    end_time_exclusive=False,
     chunks=None,
 ):
     """Lazily load one pressure level for one K-scale ensemble member.
@@ -493,8 +518,12 @@ def preprocess_ensemble(
     _, unique_indices = np.unique(ds.time.values, return_index=True)
     if len(unique_indices) != ds.sizes["time"]:
         ds = ds.isel(time=np.sort(unique_indices))
-    if start_time is not None or end_time is not None:
-        ds = ds.sel(time=slice(start_time, end_time))
+    ds = _select_ensemble_times(
+        ds,
+        start_time=start_time,
+        end_time=end_time,
+        end_time_exclusive=end_time_exclusive,
+    )
     ds = ds.expand_dims(pressure=np.asarray([level], dtype=np.float32))
     ds = check_longitude(ds, out="180")
     if ds.sizes.get("latitude", 0) > 2:
