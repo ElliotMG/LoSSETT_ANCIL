@@ -101,6 +101,7 @@ def main(argv=None):
             (day + dt.timedelta(days=1)).isoformat() + "T00:00:00"
         )
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    args.output_dir = args.output_dir / "fixed"
     args.output_dir.mkdir(parents=True, exist_ok=True)
     control_dict = {
         "max_r": args.max_scale,
