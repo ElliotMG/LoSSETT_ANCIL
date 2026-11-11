@@ -446,6 +446,29 @@ def _select_ensemble_times(
     return ds.isel(time=np.flatnonzero(keep))
 
 
+def _expected_ensemble_times(start_time, end_time):
+    """Return expected 3-hourly timestamps for a single day window."""
+    start = pd.Timestamp(start_time)
+    end = pd.Timestamp(end_time)
+    if end <= start:
+        raise ValueError("ensemble time window must have a positive duration")
+    return pd.date_range(start=start, end=end, freq="3h")
+
+
+def _validate_ensemble_day_times(ds, start_time, end_time):
+    """Require all eight 3-hourly records for a day-indexed run."""
+    expected = _expected_ensemble_times(start_time, end_time)
+    actual = pd.DatetimeIndex(ds.time.values)
+    missing = expected.difference(actual)
+    if len(missing):
+        actual_text = ", ".join(str(value) for value in actual)
+        missing_text = ", ".join(str(value) for value in missing)
+        raise ValueError(
+            "Incomplete ensemble day: missing "
+            f"{missing_text}; input times were {actual_text}"
+        )
+
+
 def preprocess_ensemble(
     ensemble_root,
     member,

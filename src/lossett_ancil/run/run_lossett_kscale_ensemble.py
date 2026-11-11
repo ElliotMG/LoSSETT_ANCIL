@@ -11,7 +11,10 @@ import numpy as np
 from lossett.calc.calc_inter_scale_transfers import (
     calc_inter_scale_energy_transfer_kinetic,
 )
-from lossett_ancil.preprocess.preprocess_kscale import preprocess_ensemble
+from lossett_ancil.preprocess.preprocess_kscale import (
+    _validate_ensemble_day_times,
+    preprocess_ensemble,
+)
 
 
 def _parser():
@@ -93,7 +96,7 @@ def main(argv=None):
             )
         except ValueError as exc:
             _parser().error(f"--first-date must be YYYY-MM-DD: {exc}")
-        args.start_time = day.isoformat()
+        args.start_time = day.isoformat() + "T03:00:00"
         args.end_time = (
             (day + dt.timedelta(days=1)).isoformat() + "T00:00:00"
         )
@@ -118,11 +121,21 @@ def main(argv=None):
             ensemble=args.ensemble,
             start_time=args.start_time,
             end_time=args.end_time,
-            end_time_exclusive=args.day_index is not None,
+            end_time_exclusive=False,
         )
+        input_times = ", ".join(str(value) for value in ds.time.values)
+        logging.info("Input times for %s: %s", args.member, input_times)
+        if args.day_index is not None:
+            _validate_ensemble_day_times(
+                ds, args.start_time, args.end_time
+            )
         # Calculate before naming the file because the actual Lmax depends on
         # the scale grid returned by LoSSETT, not directly on --max-scale-deg.
         result = calc_inter_scale_energy_transfer_kinetic(ds, control_dict)
+        result_times = ", ".join(
+            str(value) for value in result.time.values
+        ) if "time" in result.coords else "<no time coordinate>"
+        logging.info("Result times for %s: %s", args.member, result_times)
         l_min = result.length_scale[0].values / 1000
         l_max = result.length_scale[-1].values / 1000
         member_name = (
