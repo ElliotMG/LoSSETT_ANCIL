@@ -154,7 +154,7 @@ def filter_file(input_path, data_variable=None, max_diameter=None, overwrite=Fal
             raise ValueError("maximum filter diameter must be positive")
         radius = diameter / 2.0
         control_dict = {
-            "max_r": radius,
+            "max_r": diameter,
             "max_r_units": "deg",
             "angle_precision": 1e-10,
             "x_coord_name": longitude,
