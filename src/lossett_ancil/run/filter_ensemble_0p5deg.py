@@ -18,10 +18,10 @@ DEFAULT_PATTERN = "dDKEdt_ensmean_*.nc"
 LENGTH_SCALES_M = 1000.0 * np.array(
     [110.0, 220.0, 440.0, 880.0, 1760.0, 3410.0]
 )
-RADIAL_GRID_STEP_M = 2.0 * 55_000
+SEPARATION_GRID_STEP_M = 2.0 * 55_000
 METRES_PER_DEGREE = 111_000.0
 DEFAULT_MAX_DIAMETER_DEG = (
-    LENGTH_SCALES_M[-1] + RADIAL_GRID_STEP_M
+    LENGTH_SCALES_M[-1] + SEPARATION_GRID_STEP_M
 ) / METRES_PER_DEGREE
 COMPRESSION_LEVEL = 4
 
@@ -56,7 +56,7 @@ def _parser():
         help=(
             "Maximum filter diameter in degrees (default: "
             f"{DEFAULT_MAX_DIAMETER_DEG:.2f} degrees for a 3410 km diameter, "
-            "including one radial-grid increment)."
+            "including one separation-grid increment)."
         ),
     )
     parser.add_argument(
@@ -155,8 +155,9 @@ def filter_file(input_path, data_variable=None, max_diameter=None, overwrite=Fal
             diameter = DEFAULT_MAX_DIAMETER_DEG
         if diameter <= 0:
             raise ValueError("maximum filter diameter must be positive")
-        radius = diameter / 2.0
+        half_diameter = diameter / 2.0
         control_dict = {
+            # LoSSETT calls this maximum separation "max_r" internally.
             "max_r": diameter,
             "max_r_units": "deg",
             "angle_precision": 1e-10,
@@ -168,11 +169,12 @@ def filter_file(input_path, data_variable=None, max_diameter=None, overwrite=Fal
             "y_coord_boundary": np.nan,
         }
         logging.info(
-            "Filtering %s (%s) with maximum diameter %.2f degrees (radius %.2f degrees)",
+            "Filtering %s (%s) with maximum separation/diameter %.2f degrees "
+            "(half-diameter %.2f degrees)",
             input_path,
             variable_name,
             diameter,
-            radius,
+            half_diameter,
         )
         length_scales = LENGTH_SCALES_M
         ells = length_scales / 2.0
