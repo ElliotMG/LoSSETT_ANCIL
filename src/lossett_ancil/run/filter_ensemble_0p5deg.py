@@ -50,6 +50,12 @@ def _parser():
         help="Name of the data variable to filter; required if the file has several candidates.",
     )
     parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for *_filtered.nc outputs (default: each input file's parent).",
+    )
+    parser.add_argument(
         "--max-diameter",
         type=float,
         default=None,
@@ -127,17 +133,25 @@ def _coordinate_in_degrees(ds, name):
     )
 
 
-def _output_path(input_path):
-    return input_path.with_name(f"{input_path.stem}_filtered{input_path.suffix}")
+def _output_path(input_path, output_dir=None):
+    output_dir = Path(output_dir) if output_dir is not None else input_path.parent
+    return output_dir / f"{input_path.stem}_filtered{input_path.suffix}"
 
 
-def filter_file(input_path, data_variable=None, max_diameter=None, overwrite=False):
+def filter_file(
+    input_path,
+    data_variable=None,
+    max_diameter=None,
+    output_dir=None,
+    overwrite=False,
+):
     """Filter one input file and return the output path."""
     input_path = Path(input_path)
-    output_path = _output_path(input_path)
+    output_path = _output_path(input_path, output_dir)
     if output_path.exists() and not overwrite:
         logging.info("Skipping existing output %s", output_path)
         return output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with xr.open_dataset(input_path, mask_and_scale=True) as ds:
         variable_name = _data_variable(ds, data_variable)
@@ -229,6 +243,7 @@ def main(argv=None):
                 input_path,
                 data_variable=args.data_variable,
                 max_diameter=args.max_diameter,
+                output_dir=args.output_dir,
                 overwrite=args.overwrite,
             )
         except Exception:
