@@ -18,11 +18,8 @@ DEFAULT_PATTERN = "dDKEdt_ensmean_*.nc"
 LENGTH_SCALES_M = 1000.0 * np.array(
     [110.0, 220.0, 440.0, 880.0, 1760.0, 3410.0]
 )
-SEPARATION_GRID_STEP_M = 2.0 * 55_000
-METRES_PER_DEGREE = 111_000.0
-DEFAULT_MAX_DIAMETER_DEG = (
-    LENGTH_SCALES_M[-1] + SEPARATION_GRID_STEP_M
-) / METRES_PER_DEGREE
+METRES_PER_DEGREE = 110_000.0
+DEFAULT_MAX_DIAMETER_DEG = LENGTH_SCALES_M[-1] / METRES_PER_DEGREE
 COMPRESSION_LEVEL = 4
 
 
@@ -61,8 +58,8 @@ def _parser():
         default=None,
         help=(
             "Maximum filter diameter in degrees (default: "
-            f"{DEFAULT_MAX_DIAMETER_DEG:.2f} degrees for a 3410 km diameter, "
-            "including one separation-grid increment)."
+            f"{DEFAULT_MAX_DIAMETER_DEG:.2f} degrees for a 3410 km "
+            "separation; LoSSETT adds one grid increment internally)."
         ),
     )
     parser.add_argument(
@@ -116,7 +113,7 @@ def _coordinate_in_degrees(ds, name):
             attrs={**coordinate.attrs, "units": "degrees"},
             name=coordinate.name,
         )
-        return converted
+        return converted.astype("float32")
     if normalized_units in {
         "degree",
         "degrees",
@@ -126,7 +123,9 @@ def _coordinate_in_degrees(ds, name):
         "degree north",
         "degrees north",
     }:
-        return coordinate.assign_attrs({**coordinate.attrs, "units": "degrees"})
+        return coordinate.assign_attrs(
+            {**coordinate.attrs, "units": "degrees"}
+        ).astype("float32")
     raise ValueError(
         f"unsupported units {coordinate.attrs.get('units')!r} for coordinate {name!r}; "
         "expected degrees or radians"
@@ -163,7 +162,7 @@ def filter_file(
                 latitude: _coordinate_in_degrees(ds, latitude),
             }
         )
-        field = ds[variable_name]
+        field = ds[variable_name].astype("float32")
         diameter = max_diameter
         if diameter is None:
             diameter = DEFAULT_MAX_DIAMETER_DEG
@@ -205,7 +204,7 @@ def filter_file(
                 f"expected {ells!r}, got {actual_length_scales!r}"
             )
         filtered.attrs = {**field.attrs, **filtered.attrs}
-        filtered = filtered.astype("float32").load()
+        filtered = filtered.astype("float32")
         output_ds = filtered.to_dataset()
         output_ds.attrs = ds.attrs.copy()
         output_ds.encoding = ds.encoding.copy()
