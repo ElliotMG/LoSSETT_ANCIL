@@ -15,8 +15,9 @@ DEFAULT_INPUT_DIR = Path(
     "/gws/ssde/j25b/kscale/USERS/emg/data/Ensemble_Data/DS/DKE/0p5deg"
 )
 DEFAULT_PATTERN = "dDKEdt_ensmean_*.nc"
-FILTER_LENGTH_SCALES_M = np.arange(
-    55_000, 1_705_000 + 55_000, 55_000, dtype=float
+FILTER_LENGTH_SCALES_M = np.array(
+    [55_000, 110_000, 220_000, 440_000, 880_000, 1_705_000],
+    dtype=float,
 )
 RADIAL_GRID_STEP_M = 2.0 * 55_000
 METRES_PER_DEGREE = 111_000.0
