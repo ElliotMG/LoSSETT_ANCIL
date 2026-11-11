@@ -15,14 +15,13 @@ DEFAULT_INPUT_DIR = Path(
     "/gws/ssde/j25b/kscale/USERS/emg/data/Ensemble_Data/DS/DKE/0p5deg"
 )
 DEFAULT_PATTERN = "dDKEdt_ensmean_*.nc"
-FILTER_LENGTH_SCALES_M = np.array(
-    [55_000, 110_000, 220_000, 440_000, 880_000, 1_705_000],
-    dtype=float,
+LENGTH_SCALES_M = 1000.0 * np.array(
+    [110.0, 220.0, 440.0, 880.0, 1760.0, 3410.0]
 )
 RADIAL_GRID_STEP_M = 2.0 * 55_000
 METRES_PER_DEGREE = 111_000.0
 DEFAULT_MAX_DIAMETER_DEG = (
-    2.0 * FILTER_LENGTH_SCALES_M[-1] + RADIAL_GRID_STEP_M
+    LENGTH_SCALES_M[-1] + RADIAL_GRID_STEP_M
 ) / METRES_PER_DEGREE
 COMPRESSION_LEVEL = 4
 
@@ -56,8 +55,8 @@ def _parser():
         default=None,
         help=(
             "Maximum filter diameter in degrees (default: "
-            f"{DEFAULT_MAX_DIAMETER_DEG:.2f} degrees, including one radial-grid "
-            "increment so LoSSETT clips at the requested largest scale)."
+            f"{DEFAULT_MAX_DIAMETER_DEG:.2f} degrees for a 3410 km diameter, "
+            "including one radial-grid increment)."
         ),
     )
     parser.add_argument(
@@ -175,17 +174,19 @@ def filter_file(input_path, data_variable=None, max_diameter=None, overwrite=Fal
             diameter,
             radius,
         )
+        length_scales = LENGTH_SCALES_M
+        ells = length_scales / 2.0
         filtered = filter_field(
             field,
             control_dict,
-            length_scales=FILTER_LENGTH_SCALES_M,
+            length_scales=ells,
             name=f"{variable_name}_filtered",
         )
         actual_length_scales = np.asarray(filtered.length_scale.values)
-        if not np.array_equal(actual_length_scales, FILTER_LENGTH_SCALES_M):
+        if not np.array_equal(actual_length_scales, ells):
             raise ValueError(
                 "LoSSETT returned an unexpected length_scale coordinate: "
-                f"expected {FILTER_LENGTH_SCALES_M!r}, got {actual_length_scales!r}"
+                f"expected {ells!r}, got {actual_length_scales!r}"
             )
         filtered.attrs = {**field.attrs, **filtered.attrs}
         filtered = filtered.astype("float32").load()
