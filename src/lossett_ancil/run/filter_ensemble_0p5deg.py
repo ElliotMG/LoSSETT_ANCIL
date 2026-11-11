@@ -20,6 +20,7 @@ LEGACY_LENGTH_SCALES_KM = np.array(
     dtype=float,
 )
 FILTER_LENGTH_SCALES_M = 500.0 * LEGACY_LENGTH_SCALES_KM
+DEFAULT_MAX_DIAMETER_DEG = 2.0 * FILTER_LENGTH_SCALES_M[-1] / 111_000.0
 COMPRESSION_LEVEL = 4
 
 
@@ -47,10 +48,13 @@ def _parser():
         help="Name of the data variable to filter; required if the file has several candidates.",
     )
     parser.add_argument(
-        "--max-radius",
+        "--max-diameter",
         type=float,
         default=None,
-        help="Kernel radius in degrees (default: twice the largest filter scale).",
+        help=(
+            "Maximum filter diameter in degrees (default: "
+            f"twice the largest filter scale, {DEFAULT_MAX_DIAMETER_DEG:.2f} degrees)."
+        ),
     )
     parser.add_argument(
         "--overwrite",
@@ -91,11 +95,40 @@ def _coordinate_name(ds, candidates, axis):
     )
 
 
+def _coordinate_in_degrees(ds, name):
+    coordinate = ds[name]
+    units = str(coordinate.attrs.get("units", "degrees")).strip().lower()
+    normalized_units = units.replace("_", " ").replace("-", " ")
+    if normalized_units in {"rad", "radian", "radians"}:
+        values = np.rad2deg(coordinate.values)
+        converted = xr.DataArray(
+            values,
+            dims=coordinate.dims,
+            attrs={**coordinate.attrs, "units": "degrees"},
+            name=coordinate.name,
+        )
+        return converted
+    if normalized_units in {
+        "degree",
+        "degrees",
+        "deg",
+        "degree east",
+        "degrees east",
+        "degree north",
+        "degrees north",
+    }:
+        return coordinate.assign_attrs({**coordinate.attrs, "units": "degrees"})
+    raise ValueError(
+        f"unsupported units {coordinate.attrs.get('units')!r} for coordinate {name!r}; "
+        "expected degrees or radians"
+    )
+
+
 def _output_path(input_path):
     return input_path.with_name(f"{input_path.stem}_filtered{input_path.suffix}")
 
 
-def filter_file(input_path, data_variable=None, max_radius=None, overwrite=False):
+def filter_file(input_path, data_variable=None, max_diameter=None, overwrite=False):
     """Filter one input file and return the output path."""
     input_path = Path(input_path)
     output_path = _output_path(input_path)
@@ -105,27 +138,37 @@ def filter_file(input_path, data_variable=None, max_radius=None, overwrite=False
 
     with xr.open_dataset(input_path, mask_and_scale=True) as ds:
         variable_name = _data_variable(ds, data_variable)
-        field = ds[variable_name]
         longitude = _coordinate_name(ds, ("longitude", "lon", "x"), "longitude")
         latitude = _coordinate_name(ds, ("latitude", "lat", "y"), "latitude")
-        radius = max_radius
-        if radius is None:
-            radius = 2.0 * FILTER_LENGTH_SCALES_M[-1] / 111_000.0
+        ds = ds.assign_coords(
+            {
+                longitude: _coordinate_in_degrees(ds, longitude),
+                latitude: _coordinate_in_degrees(ds, latitude),
+            }
+        )
+        field = ds[variable_name]
+        diameter = max_diameter
+        if diameter is None:
+            diameter = DEFAULT_MAX_DIAMETER_DEG
+        if diameter <= 0:
+            raise ValueError("maximum filter diameter must be positive")
+        radius = diameter / 2.0
         control_dict = {
             "max_r": radius,
             "max_r_units": "deg",
             "angle_precision": 1e-10,
             "x_coord_name": longitude,
-            "x_coord_units": ds[longitude].attrs.get("units", "deg"),
+            "x_coord_units": "deg",
             "x_coord_boundary": "periodic",
             "y_coord_name": latitude,
-            "y_coord_units": ds[latitude].attrs.get("units", "deg"),
+            "y_coord_units": "deg",
             "y_coord_boundary": np.nan,
         }
         logging.info(
-            "Filtering %s (%s) with radius %.2f degrees",
+            "Filtering %s (%s) with maximum diameter %.2f degrees (radius %.2f degrees)",
             input_path,
             variable_name,
+            diameter,
             radius,
         )
         filtered = filter_field(
@@ -172,7 +215,7 @@ def main(argv=None):
             filter_file(
                 input_path,
                 data_variable=args.data_variable,
-                max_radius=args.max_radius,
+                max_diameter=args.max_diameter,
                 overwrite=args.overwrite,
             )
         except Exception:
