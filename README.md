@@ -6,7 +6,7 @@ This repository contains ancillary scripts to aid in the running of LoSSETT (htt
 
 Within `src/lossett_ancil`:
 
-* `run` contains Python and Bash scripts for orchestrating the execution of LoSSETT workflows, including on test data.
+* `run` contains Python and Bash scripts for orchestrating the execution of LoSSETT workflows, including on test data. `filter_ensemble_0p5deg.py` filters existing ensemble-mean NetCDF files in place of the input directory, writing compressed `_filtered.nc` outputs.
 * `preprocess` contains Python scripts for pre-processing data to match the specific cases in `lossett_ancil/run`, as well as some general processing functions to e.g. perform time interpolation or embed regional models inside driving models.
 * `plot` contains various example plotting Python scripts and iPython notebooks.
 
