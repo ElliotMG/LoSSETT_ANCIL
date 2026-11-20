@@ -250,7 +250,7 @@ def interp_time_driving_model(
     return ds_time_interp;
 
 def load_kscale_0p5deg(period, datetime, driving_model, nested_model=None, plevs=[100,150,200,250,300,400,500,600,700,850,925,1000]):
-    DATA_DIR_ROOT = "/gws/nopw/j04/kscale"
+    DATA_DIR_ROOT = "/gws/ssde/j25b/kscale"
 
     period = parse_period_id(period)
     dri_mod_id, dri_mod_str = parse_dri_mod_id(period,driving_model)
@@ -354,7 +354,7 @@ def load_kscale_native(
         force=False,
         SAVE_DIR=None
 ):
-    DATA_DIR_ROOT = "/gws/nopw/j04/kscale/"
+    DATA_DIR_ROOT = "/gws/ssde/j25b/kscale/"
     dt_str = f"{datetime.year:04d}{datetime.month:02d}{datetime.day:02d}T{(datetime.hour//12)*12:02d}"
 
     if save_nc and SAVE_DIR is None:
@@ -389,13 +389,13 @@ def load_kscale_native(
     #endif
 
     # DyS and DyW native res. data not yet on GWS DATA, so read from Elliot's GWS USER
-    # root file path = /gws/nopw/j04/kscale/USERS/emg/data/native_res_deterministic/{period}/{model_id}/
+    # root file path = /gws/ssde/j25b/kscale/USERS/emg/data/native_res_deterministic/{period}/{model_id}/
     
     # DYAMOND SUMMER
     elif period == "DYAMOND_SUMMER":
         # DyS native res. data not yet on GWS, so read from Elliot's scratch
         #DATA_DIR = os.path.join(DATA_DIR_ROOT, "DATA","outdir_20160801T0000Z")
-        DATA_DIR = "/gws/nopw/j04/kscale/USERS/emg/data/native_res_deterministic/DS"
+        DATA_DIR = "/gws/ssde/j25b/kscale/USERS/emg/data/native_res_deterministic/DS"
 
         start_date = dt.datetime(2016,8,1,0)
         delta = datetime - start_date
@@ -522,7 +522,7 @@ if __name__ == "__main__":
         ).sel(pressure=plevs,method="nearest")
     elif grid == "n1280":
         DATA_DIR = \
-            "/gws/nopw/j04/kscale/USERS/dship/LoSSETT_in/preprocessed_kscale_data/DYAMOND_SUMMER/n1280_regrid"
+            "/gws/ssde/j25b/kscale/USERS/dship/LoSSETT_in/preprocessed_kscale_data/DYAMOND_SUMMER/n1280_regrid"
         fpath = os.path.join(DATA_DIR,f"{nest_mod_str}.{dri_mod_str}.uvw_{dt_str}_n1280.nc")
         ds_inner = xr.open_dataset(
             fpath,mask_and_scale=True,drop_variables="leadtime"
